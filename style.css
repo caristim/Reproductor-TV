@@ -61,19 +61,20 @@ button {
    HEADER
    ========================================================================== */
 .app-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding: 18px clamp(16px, 4vw, 40px);
   gap: 16px;
-  flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
 }
 
 .brand {
+  grid-column: 2;
   display: flex;
   align-items: center;
   gap: 12px;
+  justify-self: center;
 }
 
 .brand-mark {
@@ -104,6 +105,8 @@ button {
 }
 
 .header-status {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -231,6 +234,25 @@ main { padding: clamp(16px, 4vw, 40px); }
 .gate-error { color: var(--live); font-size: 0.85rem; margin-top: 14px; }
 .gate-note { color: var(--text-faint); font-size: 0.76rem; line-height: 1.5; margin-top: 18px; }
 
+/* --- Barra de organizar orden --- */
+.grid-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.grid-toolbar .btn-ghost.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.order-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
 /* --- Grilla de canales --- */
 .channel-grid {
   display: grid;
@@ -238,6 +260,33 @@ main { padding: clamp(16px, 4vw, 40px); }
   gap: 16px;
 }
 .grid-empty { color: var(--text-muted); text-align: center; padding: 60px 0; }
+
+.channel-grid.order-mode .channel-card {
+  cursor: grab;
+  border-style: dashed;
+  border-color: var(--text-faint);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.channel-grid.order-mode .channel-card::after {
+  content: '⠿';
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--text-faint);
+  font-size: 1rem;
+  line-height: 1;
+}
+.channel-card.is-dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+.channel-card.is-grabbed {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+  background: var(--surface-hover);
+}
 
 .channel-card {
   background: var(--surface);
@@ -365,6 +414,13 @@ main { padding: clamp(16px, 4vw, 40px); }
    RESPONSIVE
    ========================================================================== */
 @media (max-width: 640px) {
+  .app-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+  .brand, .header-status { grid-column: 1; justify-self: center; }
+  .header-status { flex-wrap: wrap; justify-content: center; }
   .channel-grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
   .channel-card { padding: 14px 10px; }
   .channel-card-logo { height: 48px; }
