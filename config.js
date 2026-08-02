@@ -31,5 +31,6 @@ const CONFIG = {
     usuario: 'antel_usuario',
     password: 'antel_password_b64',
     lastChannel: 'antel_ultimo_canal',
+    order: 'antel_orden_canales',
   },
 };
