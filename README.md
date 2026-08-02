@@ -35,6 +35,15 @@ Por cómo funcionan los navegadores modernos, **abrir una ventana emergente auto
 
 Esto es la mejor combinación posible entre "automático" y "confiable en cualquier dispositivo" dada esta restricción de los navegadores — no hay forma de evitarla del todo sin instalar algo adicional (como una extensión de navegador), que fue justamente lo que se quiso evitar.
 
+## Reordenar los canales
+
+Arriba de la grilla hay un botón **"Organizar orden"**:
+
+- **Mouse / touch:** con el modo activado, arrastrá cualquier tarjeta a su nueva posición.
+- **Control remoto / teclado:** enfocá una tarjeta y apretá **Enter/OK** para "tomarla" (se resalta), usá las **flechas** para moverla, y **Enter/OK** de nuevo para "soltarla".
+
+El orden se guarda automáticamente en cada dispositivo (localStorage) — si usás la app en Windows, celular y TV Box, podés (y probablemente quieras) ordenar los canales por separado en cada uno, ya que no hay una cuenta en la nube que sincronice esto entre dispositivos.
+
 ## Editar / actualizar la app
 
 - **Colores y tipografía:** todo está centralizado en las variables al inicio de `style.css` (`:root { ... }`).
