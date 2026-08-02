@@ -18,7 +18,6 @@ const state = {
   streamRetryCount: 0,
   sessionRenewTimer: null,
   streamRenewTimer: null,
-  popupWin: null,
   orderMode: false,        // true mientras se está reordenando la grilla
   grabbedPublicId: null,   // canal "tomado" con teclado/control remoto, si hay
   dragCtx: null,           // info del arrastre con mouse/touch en curso
@@ -95,149 +94,32 @@ function clearCreds() {
 }
 
 /* ==========================================================================
-   LOGIN — flujo OIDC/CAS
-   Ver README.md para la explicación completa de por qué funciona así.
+   LOGIN + SESIÓN
+   Antes esto se hacía con un popup en el navegador, pero los navegadores no
+   permiten que un sitio lea el contenido de una ventana de otro sitio — por
+   eso se movió el login a una función propia en el servidor (api/login.js),
+   que no tiene esa restricción. Ver README.md para el detalle completo.
    ========================================================================== */
-
-// Paso 1: pedir la URL de "authorize". Si la sesión CAS del navegador ya está viva
-// (SSO), puede volver directo con el token. Si no, devuelve los datos del form de login.
-async function fetchAuthorizeState(redirectUri) {
-  const state_ = randomHex(16);
-  const nonce = randomHex(16);
-  const qs = `client_id=${encodeURIComponent(CONFIG.CLIENT_ID)}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&response_type=${encodeURIComponent('id_token token')}` +
-    `&scope=openid&state=${state_}&nonce=${nonce}` +
-    `&service=${encodeURIComponent(redirectUri)}`;
-  const authorizeUrl = `${CONFIG.OIDC_AUTHORIZE_URL}?${qs}`;
-
-  // Nota: no usamos credentials:'include' acá — Antel responde estos endpoints
-  // con Access-Control-Allow-Origin: "*" (comodín), y los navegadores no permiten
-  // combinar eso con pedidos que envían cookies. Esta primera llamada no las necesita igual.
-  const res = await fetch(authorizeUrl);
-  const finalUrl = res.url;
-
-  if (finalUrl.indexOf(redirectUri) === 0) {
-    // Ya había sesión CAS activa y volvimos directo con el token en el fragmento.
-    return { direct: true, hash: new URL(finalUrl).hash };
-  }
-
-  const html = await res.text();
-  const execMatch = html.match(/name="execution"\s+value="([^"]+)"/);
-  if (!execMatch) {
-    throw new Error('No se encontró el formulario de login de Antel (puede haber cambiado el sitio).');
-  }
-  return { direct: false, loginActionUrl: finalUrl, execution: execMatch[1] };
-}
-
-// Paso 2: enviar usuario/contraseña con una navegación real hacia un popup
-// (no con fetch, porque las cookies de sesión de Antel no viajan en pedidos
-// fetch entre sitios distintos — sí viajan en una navegación real).
-function submitCredentialsToPopup(loginActionUrl, execution, creds) {
-  const host = $('authFormHost');
-  host.innerHTML = '';
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = loginActionUrl;
-  form.target = 'antelAuthPopup';
-
-  const fields = {
-    username: creds.usuario,
-    password: creds.password,
-    execution: execution,
-    _eventId: 'submit',
-    geolocation: '',
-  };
-  for (const name in fields) {
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = name;
-    input.value = fields[name];
-    form.appendChild(input);
-  }
-  host.appendChild(form);
-  form.submit();
-}
-
-// Orquesta el login completo. Devuelve el id_token (JWT) listo para /api/sesiones.
-// gestureAllowed=true cuando se llama desde un click real del usuario.
-//
-// IMPORTANTE: la ventana emergente se abre ACÁ, de forma síncrona, antes de
-// cualquier "await". Si se abriera después de esperar una respuesta de red,
-// los navegadores dejan de asociarla con el clic del usuario y la bloquean
-// en silencio — eso es lo que causaba que el login pareciera no hacer nada.
-async function performLogin(gestureAllowed) {
+async function loginAndCreateSession() {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
-  let popup = null;
-  if (gestureAllowed) {
-    popup = window.open('', 'antelAuthPopup', 'width=480,height=640,left=100,top=80');
-    if (!popup) throw new Error('POPUP_BLOCKED');
-    state.popupWin = popup;
-  }
-
-  const redirectUri = new URL('callback.html', document.baseURI).toString();
-  const first = await fetchAuthorizeState(redirectUri);
-
-  if (first.direct) {
-    if (popup) { try { popup.close(); } catch (e) {} }
-    return extractIdToken(first.hash);
-  }
-
-  if (!popup) {
-    // Renovación en segundo plano sin clic reciente: no tiene sentido intentar
-    // abrir un popup (se bloquearía igual) — avisamos para que un clic lo resuelva.
-    throw new Error('POPUP_BLOCKED');
-  }
-
-  const tokenPromise = new Promise((resolve, reject) => {
-    function onMessage(ev) {
-      if (!ev.data || ev.data.source !== 'antel-callback') return;
-      window.removeEventListener('message', onMessage);
-      clearTimeout(timeoutId);
-      resolve(ev.data.hash);
-    }
-    window.addEventListener('message', onMessage);
-
-    const timeoutId = setTimeout(() => {
-      window.removeEventListener('message', onMessage);
-      reject(new Error('LOGIN_TIMEOUT'));
-    }, CONFIG.LOGIN_POPUP_TIMEOUT_MS);
-  });
-
-  submitCredentialsToPopup(first.loginActionUrl, first.execution, creds);
-
-  const hash = await tokenPromise;
-  try { popup.close(); } catch (e) {}
-  return extractIdToken(hash);
-}
-
-function extractIdToken(hash) {
-  const params = new URLSearchParams(hash.replace(/^#/, ''));
-  const idToken = params.get('id_token');
-  if (!idToken) throw new Error('NO_ID_TOKEN');
-  return idToken;
-}
-
-/* ==========================================================================
-   SESIÓN (/api/sesiones)
-   ========================================================================== */
-async function createSession(idToken) {
-  const creds = getStoredCreds();
-  const res = await fetch(CONFIG.SESSION_API, {
+  const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      usuario: creds.usuario,
-      dominio: CONFIG.DOMINIO,
-      tipo: 'usuario',
-      autenticacion_jwt: idToken,
-    }),
+    body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
   });
-  if (!res.ok) throw new Error('SESSION_API_' + res.status);
-  const data = await res.json();
 
+  if (!res.ok) {
+    let detail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
+    } catch (e) { /* la respuesta no era JSON, nos quedamos con el status */ }
+    throw new Error(detail);
+  }
+
+  const data = await res.json();
   state.sessionToken = data.token;
   const payload = parseJwtPayload(data.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
@@ -250,14 +132,13 @@ function scheduleSessionRenewal() {
   if (state.sessionRenewTimer) clearTimeout(state.sessionRenewTimer);
   const msUntilExpiry = state.sessionJwtExp * 1000 - Date.now();
   const delay = Math.max(msUntilExpiry - CONFIG.SESSION_RENEW_MARGIN_MS, 5000);
-  state.sessionRenewTimer = setTimeout(() => attemptRenewal(false), delay);
+  state.sessionRenewTimer = setTimeout(() => attemptRenewal(), delay);
 }
 
-async function attemptRenewal(gestureAllowed) {
+async function attemptRenewal() {
   try {
     setStatus('Renovando sesión…', 'warn');
-    const idToken = await performLogin(gestureAllowed);
-    await createSession(idToken);
+    await loginAndCreateSession();
     hideRenewBanner();
     setStatus('En vivo', 'live');
     // Si había un canal reproduciéndose, le pedimos una URL de stream fresca.
@@ -615,28 +496,17 @@ function showScreen(name) {
 /* ==========================================================================
    ARRANQUE
    ========================================================================== */
-async function bootstrapSession(gestureAllowed) {
+async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
   try {
-    const idToken = await performLogin(gestureAllowed);
-    await createSession(idToken);
+    await loginAndCreateSession();
     setStatus('En vivo', 'live');
     await loadGrid();
     showScreen('grid');
     els.resetBtn.hidden = false;
   } catch (err) {
     console.error('Error al conectar:', err);
-    if (err.message === 'POPUP_BLOCKED') {
-      if (gestureAllowed) {
-        showGateMessage('El navegador bloqueó la ventana de inicio de sesión. Permití ventanas emergentes para este sitio y volvé a intentar.');
-      }
-      // Si no hubo clic (arranque automático de la página), no mostramos error:
-      // el botón "Conectar" de abajo ya resuelve esto con un solo toque.
-      // Mostramos el motivo técnico igual (chiquito) para poder diagnosticar
-      // sin depender de F12 — útil sobre todo en el TV Box, donde no hay DevTools a mano.
-    } else {
-      showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo. [detalle: ' + err.message + ']');
-    }
+    showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo. [detalle: ' + err.message + ']');
     showScreen('gate');
     renderGateForCreds();
   }
@@ -660,7 +530,7 @@ function renderGateForCreds() {
     btn.className = 'btn-primary btn-block';
     btn.textContent = 'Conectar con ' + creds.usuario;
     btn.style.marginTop = '18px';
-    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(true); });
+    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(); });
     $('gateForm').insertAdjacentElement('afterend', btn);
   }
 }
@@ -684,10 +554,10 @@ function bootstrap() {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
     els.gateError.hidden = true;
-    bootstrapSession(true);
+    bootstrapSession();
   });
 
-  els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(true); });
+  els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
 
   els.resetBtn.addEventListener('click', () => {
     if (!confirm('¿Olvidar la cuenta guardada en este dispositivo?')) return;
@@ -712,7 +582,7 @@ function bootstrap() {
   // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
   const creds = getStoredCreds();
   if (creds) {
-    bootstrapSession(false);
+    bootstrapSession();
   } else {
     showScreen('gate');
   }
