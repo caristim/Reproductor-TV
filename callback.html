@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Conectando…</title>
+<style>
+  body { background:#12141C; color:#F5F1E8; font-family: sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+</style>
+</head>
+<body>
+<p>Conectando con AntelTV…</p>
+<script>
+  // Esta página es el "redirect_uri" que le pedimos a login.vera.com.uy.
+  // Si Antel lo acepta, termina acá con el token en el fragmento de la URL (#id_token=...&access_token=...).
+  // Se lo pasamos a la ventana que abrió este popup (la app principal) y nos cerramos solos.
+  (function () {
+    try {
+      var hash = window.location.hash || '';
+      if (window.opener) {
+        window.opener.postMessage({ source: 'antel-callback', hash: hash }, window.location.origin);
+      }
+    } catch (e) {
+      // Si algo falla, no hacemos nada más: la ventana principal detectará el timeout y mostrará el aviso.
+    } finally {
+      window.close();
+    }
+  })();
+</script>
+</body>
+</html>
