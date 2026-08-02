@@ -165,7 +165,9 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  const res = await fetch(`${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`);
+  const res = await fetch(`${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`, {
+    headers: CONFIG.GRID_HEADERS,
+  });
   if (!res.ok) throw new Error('GRID_API_' + res.status);
   const data = await res.json();
   const fetched = (data.contenidos || []).map(c => ({
