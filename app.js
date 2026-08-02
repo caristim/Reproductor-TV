@@ -264,12 +264,16 @@ async function attemptRenewal(gestureAllowed) {
     if (state.currentChannel) await refreshStreamUrl();
   } catch (err) {
     console.warn('Renovación automática falló:', err);
-    showRenewBanner();
+    showRenewBanner(err.message);
   }
 }
 
-function showRenewBanner() {
+function showRenewBanner(detail) {
   els.renewBanner.hidden = false;
+  if (detail) {
+    els.renewBanner.querySelector('p').lastChild.textContent =
+      ' No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes. [detalle: ' + detail + ']';
+  }
   setStatus('Sesión vencida', 'error');
 }
 function hideRenewBanner() {
@@ -628,8 +632,10 @@ async function bootstrapSession(gestureAllowed) {
       }
       // Si no hubo clic (arranque automático de la página), no mostramos error:
       // el botón "Conectar" de abajo ya resuelve esto con un solo toque.
+      // Mostramos el motivo técnico igual (chiquito) para poder diagnosticar
+      // sin depender de F12 — útil sobre todo en el TV Box, donde no hay DevTools a mano.
     } else {
-      showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo.');
+      showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo. [detalle: ' + err.message + ']');
     }
     showScreen('gate');
     renderGateForCreds();
