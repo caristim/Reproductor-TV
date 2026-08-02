@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Antena · TV en vivo</title>
-<meta name="description" content="Grilla de canales de AntelTV con reproducción y renovación automática de sesión.">
+<title>Reproductor TV</title>
+<meta name="description" content="Grilla de canales de TV con reproducción y renovación automática de sesión.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📡</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true"></span>
-      <h1>Antena</h1>
+      <h1>Reproductor TV</h1>
     </div>
     <div class="header-status">
       <span id="clock" class="clock"></span>
@@ -40,8 +40,8 @@
     <section id="gateScreen" class="screen gate-screen" hidden>
       <div class="gate-card">
         <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
-        <h2>Conectar con AntelTV</h2>
-        <p class="gate-copy">Ingresá tu usuario y contraseña de AntelTV una sola vez. Quedan guardados solo en este dispositivo para iniciar sesión automáticamente de ahora en más.</p>
+        <h2>Conectar</h2>
+        <p class="gate-copy">Ingresá tu usuario y contraseña una sola vez. Quedan guardados solo en este dispositivo para iniciar sesión automáticamente de ahora en más.</p>
         <form id="gateForm" autocomplete="off">
           <label for="gateUser">Usuario (email)</label>
           <input id="gateUser" name="usuario" type="email" required autocomplete="username" placeholder="tu@email.com">
@@ -56,6 +56,10 @@
 
     <!-- ============ PANTALLA 2: GRILLA ============ -->
     <section id="gridScreen" class="screen grid-screen" hidden>
+      <div class="grid-toolbar">
+        <button id="orderModeBtn" class="btn-ghost" type="button">Organizar orden</button>
+        <p id="orderModeHint" class="order-hint" hidden>Arrastrá un canal para moverlo. Con el control: Enter/OK para tomarlo, flechas para moverlo, Enter/OK de nuevo para soltarlo.</p>
+      </div>
       <div id="channelGrid" class="channel-grid" role="list"></div>
       <p id="gridEmpty" class="grid-empty" hidden>No se pudo cargar la grilla de canales. <button id="retryGridBtn" class="btn-link">Reintentar</button></p>
     </section>
