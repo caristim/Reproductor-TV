@@ -19,6 +19,10 @@ const state = {
   sessionRenewTimer: null,
   streamRenewTimer: null,
   popupWin: null,
+  orderMode: false,        // true mientras se está reordenando la grilla
+  grabbedPublicId: null,   // canal "tomado" con teclado/control remoto, si hay
+  dragCtx: null,           // info del arrastre con mouse/touch en curso
+  justDragged: false,      // evita que el click sintético post-drag dispare una acción
 };
 
 const els = {}; // referencias a elementos del DOM, se completan en bootstrap()
@@ -156,24 +160,36 @@ function submitCredentialsToPopup(loginActionUrl, execution, creds) {
 }
 
 // Orquesta el login completo. Devuelve el id_token (JWT) listo para /api/sesiones.
-// gestureAllowed=true cuando se llama desde un click real del usuario (evita el bloqueo de popups).
+// gestureAllowed=true cuando se llama desde un click real del usuario.
+//
+// IMPORTANTE: la ventana emergente se abre ACÁ, de forma síncrona, antes de
+// cualquier "await". Si se abriera después de esperar una respuesta de red,
+// los navegadores dejan de asociarla con el clic del usuario y la bloquean
+// en silencio — eso es lo que causaba que el login pareciera no hacer nada.
 async function performLogin(gestureAllowed) {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
-  const redirectUri = new URL('callback.html', document.baseURI).toString();
+  let popup = null;
+  if (gestureAllowed) {
+    popup = window.open('', 'antelAuthPopup', 'width=480,height=640,left=100,top=80');
+    if (!popup) throw new Error('POPUP_BLOCKED');
+    state.popupWin = popup;
+  }
 
+  const redirectUri = new URL('callback.html', document.baseURI).toString();
   const first = await fetchAuthorizeState(redirectUri);
+
   if (first.direct) {
+    if (popup) { try { popup.close(); } catch (e) {} }
     return extractIdToken(first.hash);
   }
 
-  // Necesitamos loguear con usuario/contraseña: abrimos (o reutilizamos) el popup.
-  const popup = window.open('', 'antelAuthPopup', 'width=480,height=640,left=100,top=80');
   if (!popup) {
+    // Renovación en segundo plano sin clic reciente: no tiene sentido intentar
+    // abrir un popup (se bloquearía igual) — avisamos para que un clic lo resuelva.
     throw new Error('POPUP_BLOCKED');
   }
-  state.popupWin = popup;
 
   const tokenPromise = new Promise((resolve, reject) => {
     function onMessage(ev) {
@@ -267,37 +283,190 @@ async function loadGrid() {
   const res = await fetch(`${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`);
   if (!res.ok) throw new Error('GRID_API_' + res.status);
   const data = await res.json();
-  state.channels = (data.contenidos || []).map(c => ({
+  const fetched = (data.contenidos || []).map(c => ({
     publicId: c.public_id,
     nombre: c.nombre_fantasia || c.nombre,
     logo: c.imagen_horizontal || c.imagen_principal,
   }));
+  state.channels = applySavedOrder(fetched);
   renderGrid();
+}
+
+// Acomoda los canales recién bajados de la API según el orden que la persona
+// guardó antes en este dispositivo. Los canales nuevos que no estén en el
+// orden guardado (ej: Antel agregó uno) se agregan al final.
+function applySavedOrder(channels) {
+  const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
+  if (!raw) return channels;
+  let savedIds;
+  try { savedIds = JSON.parse(raw); } catch (e) { return channels; }
+  const rank = new Map(savedIds.map((id, i) => [id, i]));
+  return channels.slice().sort((a, b) => {
+    const ra = rank.has(a.publicId) ? rank.get(a.publicId) : Infinity;
+    const rb = rank.has(b.publicId) ? rank.get(b.publicId) : Infinity;
+    return ra - rb;
+  });
+}
+
+function saveChannelOrder() {
+  localStorage.setItem(CONFIG.STORAGE_KEYS.order, JSON.stringify(state.channels.map(c => c.publicId)));
 }
 
 function renderGrid() {
   const grid = els.channelGrid;
   grid.innerHTML = '';
+  grid.classList.toggle('order-mode', state.orderMode);
+
   state.channels.forEach((ch) => {
     const card = document.createElement('button');
     card.className = 'channel-card';
     card.type = 'button';
     card.setAttribute('role', 'listitem');
     card.dataset.publicId = ch.publicId;
+    if (state.grabbedPublicId === ch.publicId) card.classList.add('is-grabbed');
     card.innerHTML = `
       <img class="channel-card-logo" src="${ch.logo}" alt="" loading="lazy">
       <span class="channel-card-name">${ch.nombre}</span>
     `;
-    card.addEventListener('click', () => playChannel(ch));
+
+    card.addEventListener('click', () => {
+      if (state.orderMode) {
+        if (state.justDragged) { state.justDragged = false; return; }
+        toggleGrab(card, ch);
+        return;
+      }
+      playChannel(ch);
+    });
+
+    enableCardDrag(card);
     grid.appendChild(card);
   });
+
+  if (state.grabbedPublicId) {
+    const focused = grid.querySelector(`[data-public-id="${cssEscape(state.grabbedPublicId)}"]`);
+    if (focused) focused.focus();
+  }
+}
+
+function cssEscape(str) {
+  return window.CSS && CSS.escape ? CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
+/* ---- Toggle del modo "Organizar orden" ---- */
+function toggleOrderMode() {
+  state.orderMode = !state.orderMode;
+  state.grabbedPublicId = null;
+  els.orderModeBtn.textContent = state.orderMode ? 'Listo' : 'Organizar orden';
+  els.orderModeBtn.classList.toggle('is-active', state.orderMode);
+  els.orderModeHint.hidden = !state.orderMode;
+  renderGrid();
+}
+
+/* ---- "Tomar y mover" con teclado / control remoto ---- */
+function toggleGrab(card, ch) {
+  if (state.grabbedPublicId === ch.publicId) {
+    state.grabbedPublicId = null;
+    saveChannelOrder();
+  } else {
+    state.grabbedPublicId = ch.publicId;
+  }
+  renderGrid();
+}
+
+function getColumnCount() {
+  const cards = Array.from(els.channelGrid.children);
+  if (cards.length < 2) return 1;
+  const firstTop = cards[0].offsetTop;
+  let count = 0;
+  for (const c of cards) {
+    if (c.offsetTop === firstTop) count++; else break;
+  }
+  return count || 1;
+}
+
+function moveGrabbedChannel(key) {
+  const idx = state.channels.findIndex(c => c.publicId === state.grabbedPublicId);
+  if (idx === -1) return;
+  const cols = getColumnCount();
+  let delta = 0;
+  if (key === 'ArrowLeft') delta = -1;
+  else if (key === 'ArrowRight') delta = 1;
+  else if (key === 'ArrowUp') delta = -cols;
+  else if (key === 'ArrowDown') delta = cols;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= state.channels.length) return;
+  const [item] = state.channels.splice(idx, 1);
+  state.channels.splice(newIdx, 0, item);
+  saveChannelOrder();
+  renderGrid();
+}
+
+/* ---- Arrastre con mouse / touch (reordena en vivo mientras se arrastra) ---- */
+function enableCardDrag(card) {
+  card.addEventListener('pointerdown', (e) => {
+    if (!state.orderMode) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    card.setPointerCapture(e.pointerId);
+    state.dragCtx = { pointerId: e.pointerId, el: card, startX: e.clientX, startY: e.clientY, moved: false };
+  });
+
+  card.addEventListener('pointermove', (e) => {
+    const ctx = state.dragCtx;
+    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
+    if (!ctx.moved) {
+      const dist = Math.hypot(e.clientX - ctx.startX, e.clientY - ctx.startY);
+      if (dist < 6) return;
+      ctx.moved = true;
+      card.classList.add('is-dragging');
+    }
+    card.style.pointerEvents = 'none';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    card.style.pointerEvents = '';
+    const targetCard = under && under.closest ? under.closest('.channel-card') : null;
+    if (!targetCard || targetCard === card || !els.channelGrid.contains(targetCard)) return;
+
+    const fromId = card.dataset.publicId;
+    const toId = targetCard.dataset.publicId;
+    const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
+    const toIdx = state.channels.findIndex(c => c.publicId === toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const [item] = state.channels.splice(fromIdx, 1);
+    state.channels.splice(toIdx, 0, item);
+
+    // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
+    // pierde el "pointer capture" que mantiene el arrastre activo).
+    if (fromIdx < toIdx) els.channelGrid.insertBefore(card, targetCard.nextSibling);
+    else els.channelGrid.insertBefore(card, targetCard);
+  });
+
+  function endDrag(e) {
+    const ctx = state.dragCtx;
+    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
+    card.classList.remove('is-dragging');
+    if (ctx.moved) {
+      state.justDragged = true;
+      saveChannelOrder();
+    }
+    state.dragCtx = null;
+  }
+  card.addEventListener('pointerup', endDrag);
+  card.addEventListener('pointercancel', endDrag);
 }
 
 /* Navegación espacial con flechas del control remoto / teclado sobre la grilla */
 function setupGridKeyboardNav() {
+  els.orderModeBtn.addEventListener('click', toggleOrderMode);
+
   els.channelGrid.addEventListener('keydown', (e) => {
     const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
     if (arrowKeys.indexOf(e.key) === -1) return;
+
+    if (state.orderMode && state.grabbedPublicId) {
+      e.preventDefault();
+      moveGrabbedChannel(e.key);
+      return;
+    }
+
     const cards = Array.from(els.channelGrid.querySelectorAll('.channel-card'));
     const current = document.activeElement;
     const idx = cards.indexOf(current);
@@ -442,10 +611,10 @@ function showScreen(name) {
 /* ==========================================================================
    ARRANQUE
    ========================================================================== */
-async function bootstrapSession() {
+async function bootstrapSession(gestureAllowed) {
   setStatus('Conectando…', 'warn');
   try {
-    const idToken = await performLogin(true);
+    const idToken = await performLogin(gestureAllowed);
     await createSession(idToken);
     setStatus('En vivo', 'live');
     await loadGrid();
@@ -454,9 +623,13 @@ async function bootstrapSession() {
   } catch (err) {
     console.error('Error al conectar:', err);
     if (err.message === 'POPUP_BLOCKED') {
-      showGateMessage('El navegador bloqueó la ventana de inicio de sesión. Permití ventanas emergentes para este sitio y volvé a intentar.');
+      if (gestureAllowed) {
+        showGateMessage('El navegador bloqueó la ventana de inicio de sesión. Permití ventanas emergentes para este sitio y volvé a intentar.');
+      }
+      // Si no hubo clic (arranque automático de la página), no mostramos error:
+      // el botón "Conectar" de abajo ya resuelve esto con un solo toque.
     } else {
-      showGateMessage('No se pudo conectar con AntelTV. Revisá tu usuario/contraseña e intentá de nuevo.');
+      showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo.');
     }
     showScreen('gate');
     renderGateForCreds();
@@ -481,7 +654,7 @@ function renderGateForCreds() {
     btn.className = 'btn-primary btn-block';
     btn.textContent = 'Conectar con ' + creds.usuario;
     btn.style.marginTop = '18px';
-    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(); });
+    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(true); });
     $('gateForm').insertAdjacentElement('afterend', btn);
   }
 }
@@ -490,7 +663,7 @@ function bootstrap() {
   [
     'clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn',
     'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError',
-    'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn',
+    'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
     'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
@@ -500,12 +673,12 @@ function bootstrap() {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
-  // Formulario de credenciales (primera vez)
+  // Formulario de credenciales (primera vez) — esto SÍ es un clic real, popup permitido.
   els.gateForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
     els.gateError.hidden = true;
-    bootstrapSession();
+    bootstrapSession(true);
   });
 
   els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(true); });
@@ -528,12 +701,12 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Arranque: si hay credenciales guardadas, conectar directo (requiere que
-  // este primer intento haya sido disparado por la carga de la página; si el
-  // popup llegase a bloquearse, mostramos el botón de 1 clic como respaldo).
+  // Arranque automático: NO es un clic real, así que si hace falta un popup para
+  // loguear va a bloquearse — en ese caso queda listo el botón de 1 clic en la
+  // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
   const creds = getStoredCreds();
   if (creds) {
-    bootstrapSession();
+    bootstrapSession(false);
   } else {
     showScreen('gate');
   }
