@@ -135,10 +135,9 @@ async function loginAndCreateSession() {
     let detail = 'HTTP ' + sessionRes.status;
     try {
       const errData = await sessionRes.json();
-      // Intentar extraer el mensaje de error de Antel
       detail = errData.detail || errData.mensaje || errData.error || detail;
     } catch (e) {
-      // Si no se puede parsear, usamos el status
+      // no se puede parsear
     }
     throw new Error('SESSION_API: ' + detail);
   }
@@ -191,8 +190,11 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  const res = await fetch(`${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`, {
-    headers: CONFIG.GRID_HEADERS,
+  const res = await fetch(CONFIG.GRID_API, {
+    headers: {
+      ...CONFIG.GRID_HEADERS,
+      'Authorization': 'Bearer ' + state.sessionToken,
+    },
   });
   if (!res.ok) throw new Error('GRID_API_' + res.status);
   const data = await res.json();
@@ -346,8 +348,6 @@ function enableCardDrag(card) {
     const [item] = state.channels.splice(fromIdx, 1);
     state.channels.splice(toIdx, 0, item);
 
-    // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
-    // pierde el "pointer capture" que mantiene el arrastre activo).
     if (fromIdx < toIdx) els.channelGrid.insertBefore(card, targetCard.nextSibling);
     else els.channelGrid.insertBefore(card, targetCard);
   });
@@ -427,8 +427,12 @@ async function playChannel(ch) {
 }
 
 async function fetchStreamUrl(publicId) {
-  const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
-  const res = await fetch(url);
+  const url = `${CONFIG.SETUP_API}?public_id=${encodeURIComponent(publicId)}`;
+  const res = await fetch(url, {
+    headers: {
+      'Authorization': 'Bearer ' + state.sessionToken,
+    },
+  });
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
   const data = await res.json();
   const primary = data.url && data.url.suggested && data.url.suggested.url;
@@ -484,7 +488,7 @@ function scheduleStreamRenewal(streamUrl) {
   if (expiry) {
     delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
   } else {
-    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo si no se pudo leer el vencimiento real
+    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo
   }
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
@@ -545,8 +549,6 @@ function showGateMessage(msg) {
   els.gateError.hidden = false;
 }
 
-// Si ya hay credenciales guardadas, mostramos un botón simple de 1 clic
-// en vez del formulario completo (evita reescribir usuario/contraseña).
 function renderGateForCreds() {
   const creds = getStoredCreds();
   if (!creds) return;
@@ -577,7 +579,7 @@ function bootstrap() {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
-  // Formulario de credenciales (primera vez) — esto SÍ es un clic real, popup permitido.
+  // Formulario de credenciales
   els.gateForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
@@ -605,9 +607,7 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Arranque automático: NO es un clic real, así que si hace falta un popup para
-  // loguear va a bloquearse — en ese caso queda listo el botón de 1 clic en la
-  // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
+  // Arranque automático
   const creds = getStoredCreds();
   if (creds) {
     bootstrapSession();
