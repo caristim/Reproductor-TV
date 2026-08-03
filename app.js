@@ -94,13 +94,13 @@ function clearCreds() {
 }
 
 /* ==========================================================================
-   LOGIN + SESIÓN (con creación de sesión desde el navegador)
+   LOGIN + SESIÓN (nueva versión: id_token desde Vercel, sesión creada en navegador)
    ========================================================================== */
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
-  // 1. Obtener id_token desde nuestro servidor (que hace el flujo OIDC)
+  // 1. Obtener id_token desde nuestro servidor (login.js)
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -112,7 +112,7 @@ async function loginAndCreateSession() {
     try {
       const errData = await res.json();
       if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
-    } catch (e) { /* la respuesta no era JSON, nos quedamos con el status */ }
+    } catch (e) { /* no es JSON */ }
     throw new Error(detail);
   }
 
@@ -125,7 +125,8 @@ async function loginAndCreateSession() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       usuario,
-      dominio: dominio || CONFIG.DOMINIO,  // usar el que vino o el fijo
+      dominio: dominio || CONFIG.DOMINIO,
+      tipo: 'usuario',        // ← este campo faltaba, es obligatorio
       autenticacion_jwt: id_token,
     }),
   });
@@ -134,8 +135,11 @@ async function loginAndCreateSession() {
     let detail = 'HTTP ' + sessionRes.status;
     try {
       const errData = await sessionRes.json();
-      if (errData.detail) detail = errData.detail;
-    } catch (e) { /* no es JSON */ }
+      // Intentar extraer el mensaje de error de Antel
+      detail = errData.detail || errData.mensaje || errData.error || detail;
+    } catch (e) {
+      // Si no se puede parsear, usamos el status
+    }
     throw new Error('SESSION_API: ' + detail);
   }
 
