@@ -1,5 +1,5 @@
 /**
- * app.js — Antena (TV Uruguay / AntelTV)
+ * app.js — Reproductor TV
  * Todo corre 100% en el navegador, sin backend propio.
  * Estructura: utilidades → credenciales → login OIDC/CAS → sesión → grilla → reproductor → arranque
  */
@@ -50,7 +50,7 @@ function parseJwtPayload(jwt) {
 
 // Intenta leer el campo "expiry" incrustado en el vxttoken de una URL de stream.
 // Es un "nice to have" para programar la renovación con precisión; si no se puede
-// parsear (Antel cambió el formato), usamos un intervalo fijo conservador como respaldo.
+// parsear (cambió el formato), usamos un intervalo fijo conservador como respaldo.
 function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
@@ -193,11 +193,11 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  // Confirmado con captura de red real de anteltv.com.uy: el pedido necesita
+  // Confirmado con captura de red real: el pedido necesita
   // AMBAS cosas a la vez: el token corto como query param (?token=...) Y el
   // JWT largo de la sesión en el header Authorization. Sin el header, el
   // backend devuelve 400 "Authorization not found" (probablemente exige el
-  // header cuando el Origin no es el dominio oficial de Antel).
+  // header cuando el Origin no es el dominio oficial).
   const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
     headers: {
@@ -227,7 +227,7 @@ async function loadGrid() {
 
 // Acomoda los canales recién bajados de la API según el orden que la persona
 // guardó antes en este dispositivo. Los canales nuevos que no estén en el
-// orden guardado (ej: Antel agregó uno) se agregan al final.
+// orden guardado (ej: agregó uno) se agregan al final.
 function applySavedOrder(channels) {
   const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
   if (!raw) return channels;
