@@ -13,7 +13,7 @@
   --text-muted: #8B90A3;
   --text-faint: #565C72;
 
-  --accent: #FF9D4D;        /* ámbar de "luz de antena" */
+  --accent: #FF9D4D;        /* ámbar cálido de acento */
   --accent-soft: #FF9D4D26;
   --live: #FF5A5F;          /* rojo "on air", solo para el indicador en vivo */
 
@@ -157,6 +157,7 @@ button {
   border-bottom: 1px solid #5A3E22;
   padding: 12px clamp(16px, 4vw, 40px);
 }
+.renew-banner[hidden] { display: none; }
 .renew-banner p { margin: 0; font-size: 0.92rem; color: #F3D8B8; }
 .renew-banner strong { color: var(--accent); }
 
