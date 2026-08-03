@@ -94,16 +94,13 @@ function clearCreds() {
 }
 
 /* ==========================================================================
-   LOGIN + SESIÓN
-   Antes esto se hacía con un popup en el navegador, pero los navegadores no
-   permiten que un sitio lea el contenido de una ventana de otro sitio — por
-   eso se movió el login a una función propia en el servidor (api/login.js),
-   que no tiene esa restricción. Ver README.md para el detalle completo.
+   LOGIN + SESIÓN (con creación de sesión desde el navegador)
    ========================================================================== */
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
+  // 1. Obtener id_token desde nuestro servidor (que hace el flujo OIDC)
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -119,13 +116,38 @@ async function loginAndCreateSession() {
     throw new Error(detail);
   }
 
-  const data = await res.json();
-  state.sessionToken = data.token;
-  const payload = parseJwtPayload(data.jwt);
+  const loginData = await res.json();
+  const { id_token, usuario, dominio } = loginData;
+
+  // 2. Crear sesión directamente con Antel (desde el navegador)
+  const sessionRes = await fetch(CONFIG.SESSION_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      usuario,
+      dominio: dominio || CONFIG.DOMINIO,  // usar el que vino o el fijo
+      autenticacion_jwt: id_token,
+    }),
+  });
+
+  if (!sessionRes.ok) {
+    let detail = 'HTTP ' + sessionRes.status;
+    try {
+      const errData = await sessionRes.json();
+      if (errData.detail) detail = errData.detail;
+    } catch (e) { /* no es JSON */ }
+    throw new Error('SESSION_API: ' + detail);
+  }
+
+  const sessionData = await sessionRes.json();
+
+  // 3. Guardar estado
+  state.sessionToken = sessionData.token;      // el token corto
+  const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
 
   scheduleSessionRenewal();
-  return data;
+  return sessionData;
 }
 
 function scheduleSessionRenewal() {
