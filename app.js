@@ -1,6 +1,7 @@
 /**
- * app.js — Reproductor-TV
- * Login vía OIDC con popup, sesión creada en el navegador.
+ * app.js — Antena (TV Uruguay / AntelTV)
+ * Todo corre 100% en el navegador, sin backend propio.
+ * Estructura: utilidades → credenciales → login OIDC/CAS → sesión → grilla → reproductor → arranque
  */
 
 'use strict';
@@ -9,21 +10,21 @@
    ESTADO GLOBAL
    ========================================================================== */
 const state = {
-  sessionToken: null,
-  sessionJwtExp: null,
-  channels: [],
-  currentChannel: null,
+  sessionToken: null,      // token corto usado en /api-contenidos y /api/setup
+  sessionJwtExp: null,     // epoch (segundos) de vencimiento de la sesión (~6-8hs)
+  channels: [],            // lista de canales de la grilla
+  currentChannel: null,    // canal en reproducción { publicId, nombre }
   hls: null,
   streamRetryCount: 0,
   sessionRenewTimer: null,
   streamRenewTimer: null,
-  orderMode: false,
-  grabbedPublicId: null,
-  dragCtx: null,
-  justDragged: false,
+  orderMode: false,        // true mientras se está reordenando la grilla
+  grabbedPublicId: null,   // canal "tomado" con teclado/control remoto, si hay
+  dragCtx: null,           // info del arrastre con mouse/touch en curso
+  justDragged: false,      // evita que el click sintético post-drag dispare una acción
 };
 
-const els = {};
+const els = {}; // referencias a elementos del DOM, se completan en bootstrap()
 
 /* ==========================================================================
    UTILIDADES
@@ -46,6 +47,9 @@ function parseJwtPayload(jwt) {
   }
 }
 
+// Intenta leer el campo "expiry" incrustado en el vxttoken de una URL de stream.
+// Es un "nice to have" para programar la renovación con precisión; si no se puede
+// parsear (Antel cambió el formato), usamos un intervalo fijo conservador como respaldo.
 function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
@@ -70,7 +74,7 @@ function setStatus(text, kind) {
 }
 
 /* ==========================================================================
-   CREDENCIALES
+   CREDENCIALES (guardadas solo en este dispositivo)
    ========================================================================== */
 function getStoredCreds() {
   const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
@@ -90,72 +94,40 @@ function clearCreds() {
 }
 
 /* ==========================================================================
-   LOGIN OIDC CON POPUP (NUEVO)
+   LOGIN + SESIÓN (nueva versión: id_token desde Vercel, sesión creada en navegador)
    ========================================================================== */
-function buildAuthorizeUrl() {
-  const state = randomHex(16);
-  const nonce = randomHex(16);
-  const params = new URLSearchParams({
-    client_id: CONFIG.CLIENT_ID,
-    redirect_uri: CONFIG.REDIRECT_URI,
-    response_type: 'id_token token',
-    scope: 'openid',
-    state,
-    nonce,
-    service: CONFIG.REDIRECT_URI,
-  });
-  return `${CONFIG.OIDC_AUTHORIZE_URL}?${params.toString()}`;
-}
-
-function loginWithPopup() {
-  return new Promise((resolve, reject) => {
-    const popup = window.open(buildAuthorizeUrl(), 'loginPopup', 'width=500,height=600');
-    if (!popup) {
-      reject(new Error('El navegador bloqueó el popup. Permití popups para este sitio.'));
-      return;
-    }
-
-    const listener = (event) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.data && event.data.source === 'antel-callback') {
-        const hash = event.data.hash || '';
-        const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
-        const idToken = params.get('id_token');
-        if (idToken) {
-          resolve(idToken);
-        } else {
-          reject(new Error('No se recibió id_token en el callback.'));
-        }
-        window.removeEventListener('message', listener);
-        if (popup && !popup.closed) popup.close();
-      }
-    };
-    window.addEventListener('message', listener);
-
-    const timeout = setTimeout(() => {
-      window.removeEventListener('message', listener);
-      if (popup && !popup.closed) popup.close();
-      reject(new Error('El login tardó demasiado o fue cancelado.'));
-    }, 120000);
-  });
-}
-
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
-  // 1. Obtener id_token mediante OIDC en el navegador (popup)
-  const idToken = await loginWithPopup();
+  // 1. Obtener id_token desde nuestro servidor (login.js)
+  const res = await fetch(CONFIG.LOGIN_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
+  });
+
+  if (!res.ok) {
+    let detail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
+    } catch (e) { /* no es JSON */ }
+    throw new Error(detail);
+  }
+
+  const loginData = await res.json();
+  const { id_token, usuario, dominio } = loginData;
 
   // 2. Crear sesión directamente con Antel (desde el navegador)
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      usuario: creds.usuario,
-      dominio: CONFIG.DOMINIO,
-      tipo: 'usuario',
-      autenticacion_jwt: idToken,
+      usuario,
+      dominio: dominio || CONFIG.DOMINIO,
+      tipo: 'usuario',        // ← este campo es obligatorio
+      autenticacion_jwt: id_token,
     }),
   });
 
@@ -163,15 +135,18 @@ async function loginAndCreateSession() {
     let detail = 'HTTP ' + sessionRes.status;
     try {
       const errData = await sessionRes.json();
+      // Intentar extraer el mensaje de error de Antel
       detail = errData.detail || errData.mensaje || errData.error || detail;
-    } catch (e) { /* no es JSON */ }
+    } catch (e) {
+      // Si no se puede parsear, usamos el status
+    }
     throw new Error('SESSION_API: ' + detail);
   }
 
   const sessionData = await sessionRes.json();
 
   // 3. Guardar estado
-  state.sessionToken = sessionData.token;
+  state.sessionToken = sessionData.token;      // el token corto
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
 
@@ -192,6 +167,7 @@ async function attemptRenewal() {
     await loginAndCreateSession();
     hideRenewBanner();
     setStatus('En vivo', 'live');
+    // Si había un canal reproduciéndose, le pedimos una URL de stream fresca.
     if (state.currentChannel) await refreshStreamUrl();
   } catch (err) {
     console.warn('Renovación automática falló:', err);
@@ -215,6 +191,7 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
+  // En esta versión, probamos con el token en el header Authorization
   const res = await fetch(CONFIG.GRID_API, {
     headers: {
       ...CONFIG.GRID_HEADERS,
@@ -241,6 +218,9 @@ async function loadGrid() {
   renderGrid();
 }
 
+// Acomoda los canales recién bajados de la API según el orden que la persona
+// guardó antes en este dispositivo. Los canales nuevos que no estén en el
+// orden guardado (ej: Antel agregó uno) se agregan al final.
 function applySavedOrder(channels) {
   const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
   if (!raw) return channels;
@@ -308,6 +288,7 @@ function toggleOrderMode() {
   renderGrid();
 }
 
+/* ---- "Tomar y mover" con teclado / control remoto ---- */
 function toggleGrab(card, ch) {
   if (state.grabbedPublicId === ch.publicId) {
     state.grabbedPublicId = null;
@@ -346,7 +327,7 @@ function moveGrabbedChannel(key) {
   renderGrid();
 }
 
-/* ---- Arrastre con mouse / touch ---- */
+/* ---- Arrastre con mouse / touch (reordena en vivo mientras se arrastra) ---- */
 function enableCardDrag(card) {
   card.addEventListener('pointerdown', (e) => {
     if (!state.orderMode) return;
@@ -378,6 +359,8 @@ function enableCardDrag(card) {
     const [item] = state.channels.splice(fromIdx, 1);
     state.channels.splice(toIdx, 0, item);
 
+    // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
+    // pierde el "pointer capture" que mantiene el arrastre activo).
     if (fromIdx < toIdx) els.channelGrid.insertBefore(card, targetCard.nextSibling);
     else els.channelGrid.insertBefore(card, targetCard);
   });
@@ -396,7 +379,7 @@ function enableCardDrag(card) {
   card.addEventListener('pointercancel', endDrag);
 }
 
-/* Navegación espacial con flechas */
+/* Navegación espacial con flechas del control remoto / teclado sobre la grilla */
 function setupGridKeyboardNav() {
   els.orderModeBtn.addEventListener('click', toggleOrderMode);
 
@@ -452,7 +435,7 @@ async function playChannel(ch) {
     await refreshStreamUrl();
   } catch (err) {
     console.error(err);
-    showPlayerError('No se pudo cargar este canal.');
+    showPlayerError('No se pudo cargar este canal. Puede que la sesión haya vencido.');
   }
 }
 
@@ -514,7 +497,7 @@ function scheduleStreamRenewal(streamUrl) {
   if (expiry) {
     delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
   } else {
-    delay = 3.5 * 60 * 60 * 1000;
+    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo si no se pudo leer el vencimiento real
   }
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
@@ -575,6 +558,8 @@ function showGateMessage(msg) {
   els.gateError.hidden = false;
 }
 
+// Si ya hay credenciales guardadas, mostramos un botón simple de 1 clic
+// en vez del formulario completo (evita reescribir usuario/contraseña).
 function renderGateForCreds() {
   const creds = getStoredCreds();
   if (!creds) return;
@@ -600,10 +585,12 @@ function bootstrap() {
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
 
+  // Reloj
   setInterval(() => {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
+  // Formulario de credenciales (primera vez) — esto SÍ es un clic real, popup permitido.
   els.gateForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
@@ -612,11 +599,13 @@ function bootstrap() {
   });
 
   els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
+
   els.resetBtn.addEventListener('click', () => {
     if (!confirm('¿Olvidar la cuenta guardada en este dispositivo?')) return;
     clearCreds();
     location.reload();
   });
+
   els.backBtn.addEventListener('click', () => { stopPlayback(); showScreen('grid'); });
   els.playerRetryBtn.addEventListener('click', () => {
     hidePlayerError();
@@ -629,6 +618,9 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
+  // Arranque automático: NO es un clic real, así que si hace falta un popup para
+  // loguear va a bloquearse — en ese caso queda listo el botón de 1 clic en la
+  // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
   const creds = getStoredCreds();
   if (creds) {
     bootstrapSession();
