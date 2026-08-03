@@ -1,24 +1,25 @@
 /**
  * config.js
  * Constantes de la integración con AntelTV / Vera.
- * Si Antel cambia alguna URL en el futuro, es acá donde hay que corregirla.
  */
 const CONFIG = {
-  // --- Nuestra función de login (Vercel) — hace el login contra Antel del lado del servidor ---
-  LOGIN_API: '/api/login',
-
-  // --- APIs de Vera / Antel usadas directamente desde el navegador (con CORS abierto) ---
+  // --- APIs de Vera / Antel usadas directamente desde el navegador ---
   SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
   GRID_API: 'https://cds-frontend.vera.com.uy/api-contenidos/listas/234',
   GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
 
   // --- API para crear sesión (se llama desde el navegador) ---
   SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
-  DOMINIO: 'lua',          // valor fijo (si tu usuario es de otro dominio, cámbialo)
+  DOMINIO: 'lua',
 
-  // --- Márgenes de renovación (renovar ANTES de que expire, no cuando ya expiró) ---
-  SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,   // renovar sesión 10 min antes de que venza (~cada 6-8hs)
-  STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,     // renovar URL de stream 8 min antes de que venza (~cada 4hs)
+  // --- OIDC / CAS (para login en el navegador con popup) ---
+  OIDC_AUTHORIZE_URL: 'https://login.vera.com.uy/oidc/authorize',
+  CLIENT_ID: 'veratv-beta',
+  REDIRECT_URI: window.location.origin + '/callback.html',
+
+  // --- Márgenes de renovación ---
+  SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,
+  STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,
 
   // --- Reintentos ---
   MAX_STREAM_RETRY: 3,
