@@ -1,5 +1,5 @@
 /**
- * app.js — Antena (TV Uruguay / AntelTV)
+ * app.js — Reproductor-TV
  * Login vía OIDC con popup, sesión creada en el navegador.
  */
 
