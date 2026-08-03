@@ -11,6 +11,7 @@
    ========================================================================== */
 const state = {
   sessionToken: null,      // token corto usado en /api-contenidos y /api/setup
+  sessionJwt: null,        // JWT largo usado en el header Authorization
   sessionJwtExp: null,     // epoch (segundos) de vencimiento de la sesión (~6-8hs)
   channels: [],            // lista de canales de la grilla
   currentChannel: null,    // canal en reproducción { publicId, nombre }
@@ -146,7 +147,8 @@ async function loginAndCreateSession() {
   const sessionData = await sessionRes.json();
 
   // 3. Guardar estado
-  state.sessionToken = sessionData.token;      // el token corto
+  state.sessionToken = sessionData.token;      // el token corto (va en ?token= de las URLs)
+  state.sessionJwt = sessionData.jwt;          // el JWT largo (va en el header Authorization)
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
 
@@ -191,12 +193,17 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  // Confirmado con HAR real de anteltv.com.uy: el token va como query param
-  // (?token=...), NO como header Authorization. El backend de Vera usa el
-  // mismo esquema para /listas/234, /canales/epg/listado, /setup, etc.
+  // Confirmado con captura de red real de anteltv.com.uy: el pedido necesita
+  // AMBAS cosas a la vez: el token corto como query param (?token=...) Y el
+  // JWT largo de la sesión en el header Authorization. Sin el header, el
+  // backend devuelve 400 "Authorization not found" (probablemente exige el
+  // header cuando el Origin no es el dominio oficial de Antel).
   const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
-    headers: CONFIG.GRID_HEADERS
+    headers: {
+      ...CONFIG.GRID_HEADERS,
+      'Authorization': 'Bearer ' + state.sessionJwt,
+    }
   });
 
   if (!res.ok) {
