@@ -126,7 +126,7 @@ async function loginAndCreateSession() {
     body: JSON.stringify({
       usuario,
       dominio: dominio || CONFIG.DOMINIO,
-      tipo: 'usuario',        // ← este campo faltaba, es obligatorio
+      tipo: 'usuario',
       autenticacion_jwt: id_token,
     }),
   });
@@ -136,9 +136,7 @@ async function loginAndCreateSession() {
     try {
       const errData = await sessionRes.json();
       detail = errData.detail || errData.mensaje || errData.error || detail;
-    } catch (e) {
-      // no se puede parsear
-    }
+    } catch (e) { /* no es JSON */ }
     throw new Error('SESSION_API: ' + detail);
   }
 
@@ -187,16 +185,28 @@ function hideRenewBanner() {
 }
 
 /* ==========================================================================
-   GRILLA DE CANALES
+   GRILLA DE CANALES (CORREGIDA: usa header Authorization)
    ========================================================================== */
 async function loadGrid() {
+  console.log('Token a enviar a la grilla:', state.sessionToken); // <-- depuración
+
   const res = await fetch(CONFIG.GRID_API, {
     headers: {
       ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.sessionToken,
-    },
+      'Authorization': 'Bearer ' + state.sessionToken   // <-- CORRECCIÓN
+    }
   });
-  if (!res.ok) throw new Error('GRID_API_' + res.status);
+
+  if (!res.ok) {
+    // Leer el cuerpo del error para mostrarlo mejor
+    let errorDetail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      errorDetail = errData.info || errData.detail || errorDetail;
+    } catch (e) { /* no es JSON */ }
+    throw new Error('GRID_API_' + res.status + ': ' + errorDetail);
+  }
+
   const data = await res.json();
   const fetched = (data.contenidos || []).map(c => ({
     publicId: c.public_id,
@@ -348,6 +358,8 @@ function enableCardDrag(card) {
     const [item] = state.channels.splice(fromIdx, 1);
     state.channels.splice(toIdx, 0, item);
 
+    // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
+    // pierde el "pointer capture" que mantiene el arrastre activo).
     if (fromIdx < toIdx) els.channelGrid.insertBefore(card, targetCard.nextSibling);
     else els.channelGrid.insertBefore(card, targetCard);
   });
@@ -427,12 +439,8 @@ async function playChannel(ch) {
 }
 
 async function fetchStreamUrl(publicId) {
-  const url = `${CONFIG.SETUP_API}?public_id=${encodeURIComponent(publicId)}`;
-  const res = await fetch(url, {
-    headers: {
-      'Authorization': 'Bearer ' + state.sessionToken,
-    },
-  });
+  const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
   const data = await res.json();
   const primary = data.url && data.url.suggested && data.url.suggested.url;
@@ -488,7 +496,7 @@ function scheduleStreamRenewal(streamUrl) {
   if (expiry) {
     delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
   } else {
-    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo
+    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo si no se pudo leer el vencimiento real
   }
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
@@ -549,6 +557,8 @@ function showGateMessage(msg) {
   els.gateError.hidden = false;
 }
 
+// Si ya hay credenciales guardadas, mostramos un botón simple de 1 clic
+// en vez del formulario completo (evita reescribir usuario/contraseña).
 function renderGateForCreds() {
   const creds = getStoredCreds();
   if (!creds) return;
@@ -579,7 +589,7 @@ function bootstrap() {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
-  // Formulario de credenciales
+  // Formulario de credenciales (primera vez) — esto SÍ es un clic real, popup permitido.
   els.gateForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
@@ -607,7 +617,9 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Arranque automático
+  // Arranque automático: NO es un clic real, así que si hace falta un popup para
+  // loguear va a bloquearse — en ese caso queda listo el botón de 1 clic en la
+  // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
   const creds = getStoredCreds();
   if (creds) {
     bootstrapSession();
