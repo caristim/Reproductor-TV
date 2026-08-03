@@ -1,15 +1,15 @@
 /**
  * config.js
- * Constantes de la integración con AntelTV / Vera.
- * Si Antel cambia alguna URL en el futuro, es acá donde hay que corregirla.
+ * Constantes de la integración con el proveedor de streaming.
+ * Si el proveedor cambia alguna URL en el futuro, es acá donde hay que corregirla.
  */
 const CONFIG = {
-  // --- Nuestra función de login (Vercel) — hace el login contra Antel del lado del servidor ---
+  // --- Nuestra función de login (Vercel) — hace el login del lado del servidor ---
   LOGIN_API: '/api/login',
 
-  // --- APIs de Vera / Antel usadas directamente desde el navegador (con CORS abierto) ---
+  // --- APIs del proveedor usadas directamente desde el navegador (con CORS abierto) ---
   SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
-  GRID_API: 'https://cds-frontend.vera.com.uy/api-contenidos/listas/234',
+  GRID_API: 'https://cds-frontend.vera.com.uy/api-contenidos/listas/68',
   GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
 
   // --- API para crear sesión (se llama desde el navegador) ---
@@ -25,9 +25,9 @@ const CONFIG = {
 
   // --- Almacenamiento local ---
   STORAGE_KEYS: {
-    usuario: 'antel_usuario',
-    password: 'antel_password_b64',
-    lastChannel: 'antel_ultimo_canal',
-    order: 'antel_orden_canales',
+    usuario: 'tv_usuario',
+    password: 'tv_password_b64',
+    lastChannel: 'tv_ultimo_canal',
+    order: 'tv_orden_canales',
   },
 };
