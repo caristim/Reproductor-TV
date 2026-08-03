@@ -8,7 +8,7 @@
  * navegador real, paso a paso, y quedarse con el resultado final.
  *
  * Recibe:  POST { usuario, password }
- * Devuelve: { id_token, usuario, dominio } (para que el cliente cree la sesión)
+ * Devuelve: { id_token, usuario, dominio }  (ya NO crea la sesión, eso lo hace el frontend)
  *
  * No guarda ni loguea la contraseña en ningún lado — solo la reenvía a Antel.
  */
@@ -16,7 +16,7 @@
 const CLIENT_ID = 'veratv-beta';
 const REDIRECT_URI = 'https://tv.vera.com.uy/';
 const OIDC_AUTHORIZE_URL = 'https://login.vera.com.uy/oidc/authorize';
-const DOMINIO = 'lua';
+const DOMINIO = 'lua';   // fijo para todos los usuarios (según la implementación original)
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -52,8 +52,6 @@ module.exports = async function handler(req, res) {
     }
 
     // --- Paso 3: enviar usuario/contraseña ---
-    // Se postea a la MISMA url del formulario (confirmado con datos reales:
-    // en la captura de red real, el POST fue a idéntica URL que el GET del paso 2).
     const body = new URLSearchParams({
       ...hiddenFields,
       username: usuario,
@@ -83,11 +81,11 @@ module.exports = async function handler(req, res) {
     const idToken = extractIdToken(finalUrl);
     if (!idToken) throw new AppError('PASO_5_SIN_TOKEN', `no se encontró id_token en: ${finalUrl}`);
 
-    // Devolvemos id_token, usuario y dominio para que el navegador cree la sesión.
+    // --- Devolver el id_token para que el frontend cree la sesión ---
     res.status(200).json({
       id_token: idToken,
       usuario: usuario,
-      dominio: DOMINIO
+      dominio: DOMINIO,   // el dominio fijo (puedes cambiarlo si es dinámico)
     });
   } catch (err) {
     console.error('Login falló en', err.step || 'paso desconocido', '-', err.message);
