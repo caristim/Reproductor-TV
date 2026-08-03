@@ -8,7 +8,7 @@
  * navegador real, paso a paso, y quedarse con el resultado final.
  *
  * Recibe:  POST { usuario, password }
- * Devuelve: el mismo JSON que da /api/sesiones de Antel (token, jwt, etc.)
+ * Devuelve: { id_token, usuario, dominio } (para que el cliente cree la sesión)
  *
  * No guarda ni loguea la contraseña en ningún lado — solo la reenvía a Antel.
  */
@@ -16,7 +16,6 @@
 const CLIENT_ID = 'veratv-beta';
 const REDIRECT_URI = 'https://tv.vera.com.uy/';
 const OIDC_AUTHORIZE_URL = 'https://login.vera.com.uy/oidc/authorize';
-const SESSION_API = 'https://veratv-be.vera.com.uy/api/sesiones';
 const DOMINIO = 'lua';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -84,16 +83,12 @@ module.exports = async function handler(req, res) {
     const idToken = extractIdToken(finalUrl);
     if (!idToken) throw new AppError('PASO_5_SIN_TOKEN', `no se encontró id_token en: ${finalUrl}`);
 
-    // --- Paso 6: crear la sesión de Antel con ese token ---
-    const sessionRes = await fetch(SESSION_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-      body: JSON.stringify({ usuario, dominio: DOMINIO, tipo: 'usuario', autenticacion_jwt: idToken }),
+    // Devolvemos id_token, usuario y dominio para que el navegador cree la sesión.
+    res.status(200).json({
+      id_token: idToken,
+      usuario: usuario,
+      dominio: DOMINIO
     });
-    if (!sessionRes.ok) throw new AppError('PASO_6_SESIONES', `status ${sessionRes.status}`);
-    const sessionData = await sessionRes.json();
-
-    res.status(200).json(sessionData);
   } catch (err) {
     console.error('Login falló en', err.step || 'paso desconocido', '-', err.message);
     res.status(502).json({ error: 'login_failed', step: err.step || null, detail: err.message });
