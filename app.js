@@ -191,12 +191,12 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  // En esta versión, probamos con el token en el header Authorization
-  const res = await fetch(CONFIG.GRID_API, {
-    headers: {
-      ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.sessionToken
-    }
+  // Confirmado con HAR real de anteltv.com.uy: el token va como query param
+  // (?token=...), NO como header Authorization. El backend de Vera usa el
+  // mismo esquema para /listas/234, /canales/epg/listado, /setup, etc.
+  const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
+  const res = await fetch(url, {
+    headers: CONFIG.GRID_HEADERS
   });
 
   if (!res.ok) {
