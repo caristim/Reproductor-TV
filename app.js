@@ -50,7 +50,7 @@ function parseJwtPayload(jwt) {
 
 // Intenta leer el campo "expiry" incrustado en el vxttoken de una URL de stream.
 // Es un "nice to have" para programar la renovación con precisión; si no se puede
-// parsear (cambió el formato), usamos un intervalo fijo conservador como respaldo.
+// parsear (el proveedor cambió el formato), usamos un intervalo fijo conservador como respaldo.
 function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
@@ -120,7 +120,7 @@ async function loginAndCreateSession() {
   const loginData = await res.json();
   const { id_token, usuario, dominio } = loginData;
 
-  // 2. Crear sesión directamente con Antel (desde el navegador)
+  // 2. Crear sesión directamente con el proveedor (desde el navegador)
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -136,7 +136,7 @@ async function loginAndCreateSession() {
     let detail = 'HTTP ' + sessionRes.status;
     try {
       const errData = await sessionRes.json();
-      // Intentar extraer el mensaje de error de Antel
+      // Intentar extraer el mensaje de error del proveedor
       detail = errData.detail || errData.mensaje || errData.error || detail;
     } catch (e) {
       // Si no se puede parsear, usamos el status
@@ -193,11 +193,11 @@ function hideRenewBanner() {
    GRILLA DE CANALES
    ========================================================================== */
 async function loadGrid() {
-  // Confirmado con captura de red real: el pedido necesita
+  // Confirmado con captura de red real del sitio oficial: el pedido necesita
   // AMBAS cosas a la vez: el token corto como query param (?token=...) Y el
   // JWT largo de la sesión en el header Authorization. Sin el header, el
   // backend devuelve 400 "Authorization not found" (probablemente exige el
-  // header cuando el Origin no es el dominio oficial).
+  // header cuando el Origin no es el dominio oficial del proveedor).
   const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
     headers: {
@@ -227,7 +227,7 @@ async function loadGrid() {
 
 // Acomoda los canales recién bajados de la API según el orden que la persona
 // guardó antes en este dispositivo. Los canales nuevos que no estén en el
-// orden guardado (ej: agregó uno) se agregan al final.
+// orden guardado (ej: el proveedor agregó uno) se agregan al final.
 function applySavedOrder(channels) {
   const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
   if (!raw) return channels;
