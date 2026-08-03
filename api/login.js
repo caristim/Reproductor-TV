@@ -1,16 +1,16 @@
 /**
  * api/login.js — Vercel Serverless Function
  *
- * Hace TODO el proceso de login contra Antel del lado del servidor (no en el
- * navegador de la persona), porque los navegadores no dejan que un sitio web
- * lea el contenido de una ventana de otro sitio (por seguridad). Un servidor
- * no tiene esa restricción: puede hacer los mismos pedidos HTTP que hace un
- * navegador real, paso a paso, y quedarse con el resultado final.
+ * Hace TODO el proceso de login contra el proveedor del lado del servidor (no
+ * en el navegador de la persona), porque los navegadores no dejan que un
+ * sitio web lea el contenido de una ventana de otro sitio (por seguridad).
+ * Un servidor no tiene esa restricción: puede hacer los mismos pedidos HTTP
+ * que hace un navegador real, paso a paso, y quedarse con el resultado final.
  *
  * Recibe:  POST { usuario, password }
  * Devuelve: { id_token, usuario, dominio }  (ya NO crea la sesión, eso lo hace el frontend)
  *
- * No guarda ni loguea la contraseña en ningún lado — solo la reenvía a Antel.
+ * No guarda ni loguea la contraseña en ningún lado — solo la reenvía al proveedor.
  */
 
 const CLIENT_ID = 'veratv-beta';
@@ -48,7 +48,7 @@ module.exports = async function handler(req, res) {
     const html = await step2.text();
     const hiddenFields = parseHiddenFields(html);
     if (!hiddenFields.execution) {
-      throw new AppError('PASO_2_SIN_EXECUTION', 'no se encontró el campo "execution" en el formulario (¿cambió el sitio de Antel?)');
+      throw new AppError('PASO_2_SIN_EXECUTION', 'no se encontró el campo "execution" en el formulario (¿cambió el sitio del proveedor?)');
     }
 
     // --- Paso 3: enviar usuario/contraseña ---
