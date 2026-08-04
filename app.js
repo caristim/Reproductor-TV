@@ -216,11 +216,17 @@ async function loadGrid() {
   }
 
   const data = await res.json();
-  const fetched = (data.contenidos || []).map(c => ({
-    publicId: c.public_id,
-    nombre: c.nombre_fantasia || c.nombre,
-    logo: c.imagen_horizontal || c.imagen_principal,
-  }));
+  // Canales excluidos de la grilla a pedido: solo se pueden ver desde el
+  // exterior, no tiene sentido mostrarlos acá.
+  const EXCLUDED_PUBLIC_IDS = new Set(['2sss2q50', '2sss2qxn']); // AntelTV Internacional 1 y 2
+
+  const fetched = (data.contenidos || [])
+    .filter(c => !EXCLUDED_PUBLIC_IDS.has(c.public_id))
+    .map(c => ({
+      publicId: c.public_id,
+      nombre: c.nombre_fantasia || c.nombre,
+      logo: c.imagen_horizontal || c.imagen_principal,
+    }));
   state.channels = applySavedOrder(fetched);
   renderGrid();
 }
@@ -442,18 +448,25 @@ async function playChannel(ch) {
     await refreshStreamUrl();
   } catch (err) {
     console.error(err);
-    showPlayerError('No se pudo cargar este canal. Puede que la sesión haya vencido.');
+    showPlayerError('No se pudo cargar este canal. [detalle: ' + err.message + ']');
   }
 }
 
 async function fetchStreamUrl(publicId) {
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error('SETUP_API_' + res.status);
+  if (!res.ok) {
+    let errorDetail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      errorDetail = errData.info || errData.detail || errData.mensaje || errData.error || errorDetail;
+    } catch (_) { /* el cuerpo no era JSON, nos quedamos con el código HTTP */ }
+    throw new Error('SETUP_API_' + res.status + ': ' + errorDetail);
+  }
   const data = await res.json();
   const primary = data.url && data.url.suggested && data.url.suggested.url;
   const backup = data.url_backup && data.url_backup.suggested && data.url_backup.suggested.url;
-  if (!primary && !backup) throw new Error('NO_STREAM_URL');
+  if (!primary && !backup) throw new Error('NO_STREAM_URL: el canal no devolvió ninguna URL de video');
   return primary || backup;
 }
 
