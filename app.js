@@ -369,13 +369,17 @@ function enableCardDrag(card) {
     const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
     const toIdx = state.channels.findIndex(c => c.publicId === toId);
     if (fromIdx === -1 || toIdx === -1) return;
-    const [item] = state.channels.splice(fromIdx, 1);
-    state.channels.splice(toIdx, 0, item);
+    // Intercambio directo: la tarjeta soltada y la que estaba en ese lugar
+    // cambian de posición entre sí; el resto de la grilla no se mueve.
+    [state.channels[fromIdx], state.channels[toIdx]] = [state.channels[toIdx], state.channels[fromIdx]];
 
     // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
     // pierde el "pointer capture" que mantiene el arrastre activo).
-    if (fromIdx < toIdx) els.channelGrid.insertBefore(card, targetCard.nextSibling);
-    else els.channelGrid.insertBefore(card, targetCard);
+    const placeholder = document.createComment('');
+    card.parentNode.insertBefore(placeholder, card);
+    targetCard.parentNode.insertBefore(card, targetCard);
+    placeholder.parentNode.insertBefore(targetCard, placeholder);
+    placeholder.remove();
   });
 
   function endDrag(e) {
