@@ -1,56 +1,37 @@
 /**
- * app.js — Reproductor TV
- * Todo corre 100% en el navegador, sin backend propio.
- * Estructura: utilidades → credenciales → login OIDC/CAS → sesión → grilla → reproductor → arranque
+ * app.js — Antena (TV Uruguay / AntelTV)
+ * Con arrastre de canales corregido.
  */
 
 'use strict';
 
-/* ==========================================================================
-   ESTADO GLOBAL
-   ========================================================================== */
 const state = {
-  sessionToken: null,      // token corto usado en /api-contenidos y /api/setup
-  sessionJwt: null,        // JWT largo usado en el header Authorization
-  sessionJwtExp: null,     // epoch (segundos) de vencimiento de la sesión (~6-8hs)
-  channels: [],            // lista de canales de la grilla
-  currentChannel: null,    // canal en reproducción { publicId, nombre }
+  sessionToken: null,
+  sessionJwtExp: null,
+  channels: [],
+  currentChannel: null,
   hls: null,
   streamRetryCount: 0,
   sessionRenewTimer: null,
   streamRenewTimer: null,
-  orderMode: false,        // true mientras se está reordenando la grilla
-  grabbedPublicId: null,   // canal "tomado" con teclado/control remoto, si hay
-  dragCtx: null,           // info del arrastre con mouse/touch en curso
-  justDragged: false,      // evita que el click sintético post-drag dispare una acción
+  orderMode: false,
+  grabbedPublicId: null,
+  dragCtx: null,
+  justDragged: false,
 };
 
-const els = {}; // referencias a elementos del DOM, se completan en bootstrap()
+const els = {};
 
-/* ==========================================================================
-   UTILIDADES
-   ========================================================================== */
 function $(id) { return document.getElementById(id); }
-
-function randomHex(bytes) {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
-}
 
 function parseJwtPayload(jwt) {
   try {
     const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
     const padded = b64 + '=='.slice(0, (4 - (b64.length % 4)) % 4);
     return JSON.parse(decodeURIComponent(escape(atob(padded))));
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-// Intenta leer el campo "expiry" incrustado en el vxttoken de una URL de stream.
-// Es un "nice to have" para programar la renovación con precisión; si no se puede
-// parsear (el proveedor cambió el formato), usamos un intervalo fijo conservador como respaldo.
 function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
@@ -61,9 +42,7 @@ function parseStreamExpiry(streamUrl) {
     const decoded = decodeURIComponent(atob(b64));
     const expMatch = decoded.match(/expiry=(\d+)/);
     return expMatch ? parseInt(expMatch[1], 10) : null;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
@@ -74,9 +53,6 @@ function setStatus(text, kind) {
   els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
 }
 
-/* ==========================================================================
-   CREDENCIALES (guardadas solo en este dispositivo)
-   ========================================================================== */
 function getStoredCreds() {
   const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
   const passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
@@ -94,40 +70,34 @@ function clearCreds() {
   localStorage.removeItem(CONFIG.STORAGE_KEYS.password);
 }
 
-/* ==========================================================================
-   LOGIN + SESIÓN (nueva versión: id_token desde Vercel, sesión creada en navegador)
-   ========================================================================== */
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
   if (!creds) throw new Error('NO_CREDS');
 
-  // 1. Obtener id_token desde nuestro servidor (login.js)
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
   });
-
   if (!res.ok) {
     let detail = 'HTTP ' + res.status;
     try {
       const errData = await res.json();
       if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
-    } catch (e) { /* no es JSON */ }
+    } catch (e) {}
     throw new Error(detail);
   }
 
   const loginData = await res.json();
   const { id_token, usuario, dominio } = loginData;
 
-  // 2. Crear sesión directamente con el proveedor (desde el navegador)
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       usuario,
       dominio: dominio || CONFIG.DOMINIO,
-      tipo: 'usuario',        // ← este campo es obligatorio
+      tipo: 'usuario',
       autenticacion_jwt: id_token,
     }),
   });
@@ -136,22 +106,15 @@ async function loginAndCreateSession() {
     let detail = 'HTTP ' + sessionRes.status;
     try {
       const errData = await sessionRes.json();
-      // Intentar extraer el mensaje de error del proveedor
       detail = errData.detail || errData.mensaje || errData.error || detail;
-    } catch (e) {
-      // Si no se puede parsear, usamos el status
-    }
+    } catch (e) {}
     throw new Error('SESSION_API: ' + detail);
   }
 
   const sessionData = await sessionRes.json();
-
-  // 3. Guardar estado
-  state.sessionToken = sessionData.token;      // el token corto (va en ?token= de las URLs)
-  state.sessionJwt = sessionData.jwt;          // el JWT largo (va en el header Authorization)
+  state.sessionToken = sessionData.token;
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
-
   scheduleSessionRenewal();
   return sessionData;
 }
@@ -169,7 +132,6 @@ async function attemptRenewal() {
     await loginAndCreateSession();
     hideRenewBanner();
     setStatus('En vivo', 'live');
-    // Si había un canal reproduciéndose, le pedimos una URL de stream fresca.
     if (state.currentChannel) await refreshStreamUrl();
   } catch (err) {
     console.warn('Renovación automática falló:', err);
@@ -189,20 +151,13 @@ function hideRenewBanner() {
   els.renewBanner.hidden = true;
 }
 
-/* ==========================================================================
-   GRILLA DE CANALES
-   ========================================================================== */
+/* ================== GRILLA ================== */
+
 async function loadGrid() {
-  // Confirmado con captura de red real del sitio oficial: el pedido necesita
-  // AMBAS cosas a la vez: el token corto como query param (?token=...) Y el
-  // JWT largo de la sesión en el header Authorization. Sin el header, el
-  // backend devuelve 400 "Authorization not found" (probablemente exige el
-  // header cuando el Origin no es el dominio oficial del proveedor).
-  const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
-  const res = await fetch(url, {
+  const res = await fetch(CONFIG.GRID_API, {
     headers: {
       ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.sessionJwt,
+      'Authorization': 'Bearer ' + state.sessionToken
     }
   });
 
@@ -211,29 +166,20 @@ async function loadGrid() {
     try {
       const errData = await res.json();
       errorDetail = errData.info || errData.detail || errorDetail;
-    } catch (e) { /* no es JSON */ }
+    } catch (e) {}
     throw new Error('GRID_API_' + res.status + ': ' + errorDetail);
   }
 
   const data = await res.json();
-  // Canales excluidos de la grilla a pedido: solo se pueden ver desde el
-  // exterior, no tiene sentido mostrarlos acá.
-  const EXCLUDED_PUBLIC_IDS = new Set(['2sss2q50', '2sss2qxn']); // AntelTV Internacional 1 y 2
-
-  const fetched = (data.contenidos || [])
-    .filter(c => !EXCLUDED_PUBLIC_IDS.has(c.public_id))
-    .map(c => ({
-      publicId: c.public_id,
-      nombre: c.nombre_fantasia || c.nombre,
-      logo: c.imagen_horizontal || c.imagen_principal,
-    }));
+  const fetched = (data.contenidos || []).map(c => ({
+    publicId: c.public_id,
+    nombre: c.nombre_fantasia || c.nombre,
+    logo: c.imagen_horizontal || c.imagen_principal,
+  }));
   state.channels = applySavedOrder(fetched);
   renderGrid();
 }
 
-// Acomoda los canales recién bajados de la API según el orden que la persona
-// guardó antes en este dispositivo. Los canales nuevos que no estén en el
-// orden guardado (ej: el proveedor agregó uno) se agregan al final.
 function applySavedOrder(channels) {
   const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
   if (!raw) return channels;
@@ -291,7 +237,6 @@ function cssEscape(str) {
   return window.CSS && CSS.escape ? CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
 
-/* ---- Toggle del modo "Organizar orden" ---- */
 function toggleOrderMode() {
   state.orderMode = !state.orderMode;
   state.grabbedPublicId = null;
@@ -301,7 +246,6 @@ function toggleOrderMode() {
   renderGrid();
 }
 
-/* ---- "Tomar y mover" con teclado / control remoto ---- */
 function toggleGrab(card, ch) {
   if (state.grabbedPublicId === ch.publicId) {
     state.grabbedPublicId = null;
@@ -340,63 +284,123 @@ function moveGrabbedChannel(key) {
   renderGrid();
 }
 
-/* ---- Arrastre con mouse / touch (reordena en vivo mientras se arrastra) ---- */
+/* ================== ARRASTRE CORREGIDO ================== */
+
 function enableCardDrag(card) {
+  // Prevenir el drag nativo del navegador
+  card.addEventListener('dragstart', (e) => e.preventDefault());
+
   card.addEventListener('pointerdown', (e) => {
     if (!state.orderMode) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault(); // Evita selección de texto y drag nativo
+
+    const rect = card.getBoundingClientRect();
+    state.dragCtx = {
+      pointerId: e.pointerId,
+      el: card,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      moved: false,
+      clone: null,
+    };
+
     card.setPointerCapture(e.pointerId);
-    state.dragCtx = { pointerId: e.pointerId, el: card, startX: e.clientX, startY: e.clientY, moved: false };
+    card.classList.add('is-dragging');
   });
 
   card.addEventListener('pointermove', (e) => {
     const ctx = state.dragCtx;
     if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
+
     if (!ctx.moved) {
       const dist = Math.hypot(e.clientX - ctx.startX, e.clientY - ctx.startY);
       if (dist < 6) return;
       ctx.moved = true;
-      card.classList.add('is-dragging');
+      // Crear un clon visual para el arrastre (opcional)
     }
+
+    // Mover el clon o la tarjeta con el mouse (opcional)
+    // En lugar de mover la tarjeta, usamos un clon para no perder el pointer capture
+    if (!ctx.clone) {
+      ctx.clone = card.cloneNode(true);
+      ctx.clone.style.position = 'fixed';
+      ctx.clone.style.pointerEvents = 'none';
+      ctx.clone.style.opacity = '0.8';
+      ctx.clone.style.zIndex = '9999';
+      ctx.clone.style.width = card.offsetWidth + 'px';
+      ctx.clone.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)';
+      document.body.appendChild(ctx.clone);
+    }
+
+    ctx.clone.style.left = (e.clientX - ctx.offsetX) + 'px';
+    ctx.clone.style.top = (e.clientY - ctx.offsetY) + 'px';
+
+    // Detectar debajo de qué tarjeta estamos
     card.style.pointerEvents = 'none';
     const under = document.elementFromPoint(e.clientX, e.clientY);
     card.style.pointerEvents = '';
     const targetCard = under && under.closest ? under.closest('.channel-card') : null;
-    if (!targetCard || targetCard === card || !els.channelGrid.contains(targetCard)) return;
-
-    const fromId = card.dataset.publicId;
-    const toId = targetCard.dataset.publicId;
-    const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
-    const toIdx = state.channels.findIndex(c => c.publicId === toId);
-    if (fromIdx === -1 || toIdx === -1) return;
-    // Intercambio directo: la tarjeta soltada y la que estaba en ese lugar
-    // cambian de posición entre sí; el resto de la grilla no se mueve.
-    [state.channels[fromIdx], state.channels[toIdx]] = [state.channels[toIdx], state.channels[fromIdx]];
-
-    // Reordenar el DOM en vivo, sin reconstruir todas las tarjetas (así no se
-    // pierde el "pointer capture" que mantiene el arrastre activo).
-    const placeholder = document.createComment('');
-    card.parentNode.insertBefore(placeholder, card);
-    targetCard.parentNode.insertBefore(card, targetCard);
-    placeholder.parentNode.insertBefore(targetCard, placeholder);
-    placeholder.remove();
+    if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
+      // Resaltar la tarjeta destino
+      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+      targetCard.classList.add('drag-over');
+    } else {
+      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+    }
   });
 
-  function endDrag(e) {
+  const endDrag = (e) => {
     const ctx = state.dragCtx;
     if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
-    card.classList.remove('is-dragging');
-    if (ctx.moved) {
-      state.justDragged = true;
-      saveChannelOrder();
+
+    // Eliminar el clon
+    if (ctx.clone) {
+      ctx.clone.remove();
+      ctx.clone = null;
     }
+
+    card.classList.remove('is-dragging');
+    els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+
+    if (ctx.moved) {
+      // Determinar la tarjeta destino
+      card.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      card.style.pointerEvents = '';
+      const targetCard = under && under.closest ? under.closest('.channel-card') : null;
+
+      if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
+        const fromId = card.dataset.publicId;
+        const toId = targetCard.dataset.publicId;
+        const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
+        const toIdx = state.channels.findIndex(c => c.publicId === toId);
+        if (fromIdx !== -1 && toIdx !== -1) {
+          const [item] = state.channels.splice(fromIdx, 1);
+          state.channels.splice(toIdx, 0, item);
+          saveChannelOrder();
+          // Reordenar el DOM sin re-renderizar todo
+          if (fromIdx < toIdx) {
+            els.channelGrid.insertBefore(card, targetCard.nextSibling);
+          } else {
+            els.channelGrid.insertBefore(card, targetCard);
+          }
+          state.justDragged = true;
+        }
+      }
+    }
+
     state.dragCtx = null;
-  }
+  };
+
   card.addEventListener('pointerup', endDrag);
   card.addEventListener('pointercancel', endDrag);
 }
 
-/* Navegación espacial con flechas del control remoto / teclado sobre la grilla */
+/* ================== NAVEGACIÓN TECLADO ================== */
+
 function setupGridKeyboardNav() {
   els.orderModeBtn.addEventListener('click', toggleOrderMode);
 
@@ -437,9 +441,8 @@ function setupGridKeyboardNav() {
   });
 }
 
-/* ==========================================================================
-   REPRODUCTOR
-   ========================================================================== */
+/* ================== REPRODUCTOR ================== */
+
 async function playChannel(ch) {
   state.currentChannel = ch;
   state.streamRetryCount = 0;
@@ -452,25 +455,18 @@ async function playChannel(ch) {
     await refreshStreamUrl();
   } catch (err) {
     console.error(err);
-    showPlayerError('No se pudo cargar este canal. [detalle: ' + err.message + ']');
+    showPlayerError('No se pudo cargar este canal.');
   }
 }
 
 async function fetchStreamUrl(publicId) {
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
   const res = await fetch(url);
-  if (!res.ok) {
-    let errorDetail = 'HTTP ' + res.status;
-    try {
-      const errData = await res.json();
-      errorDetail = errData.info || errData.detail || errData.mensaje || errData.error || errorDetail;
-    } catch (_) { /* el cuerpo no era JSON, nos quedamos con el código HTTP */ }
-    throw new Error('SETUP_API_' + res.status + ': ' + errorDetail);
-  }
+  if (!res.ok) throw new Error('SETUP_API_' + res.status);
   const data = await res.json();
   const primary = data.url && data.url.suggested && data.url.suggested.url;
   const backup = data.url_backup && data.url_backup.suggested && data.url_backup.suggested.url;
-  if (!primary && !backup) throw new Error('NO_STREAM_URL: el canal no devolvió ninguna URL de video');
+  if (!primary && !backup) throw new Error('NO_STREAM_URL');
   return primary || backup;
 }
 
@@ -483,7 +479,6 @@ async function refreshStreamUrl() {
 
 function loadIntoPlayer(streamUrl) {
   const video = els.videoPlayer;
-
   if (state.hls) { state.hls.destroy(); state.hls = null; }
 
   if (window.Hls && Hls.isSupported()) {
@@ -521,7 +516,7 @@ function scheduleStreamRenewal(streamUrl) {
   if (expiry) {
     delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
   } else {
-    delay = 3.5 * 60 * 60 * 1000; // respaldo fijo si no se pudo leer el vencimiento real
+    delay = 3.5 * 60 * 60 * 1000;
   }
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
@@ -549,18 +544,16 @@ function showPlayerError(text) {
 }
 function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
 
-/* ==========================================================================
-   NAVEGACIÓN ENTRE PANTALLAS
-   ========================================================================== */
+/* ================== NAVEGACIÓN PANTALLAS ================== */
+
 function showScreen(name) {
   els.gateScreen.hidden = name !== 'gate';
   els.gridScreen.hidden = name !== 'grid';
   els.playerScreen.hidden = name !== 'player';
 }
 
-/* ==========================================================================
-   ARRANQUE
-   ========================================================================== */
+/* ================== ARRANQUE ================== */
+
 async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
   try {
@@ -582,8 +575,6 @@ function showGateMessage(msg) {
   els.gateError.hidden = false;
 }
 
-// Si ya hay credenciales guardadas, mostramos un botón simple de 1 clic
-// en vez del formulario completo (evita reescribir usuario/contraseña).
 function renderGateForCreds() {
   const creds = getStoredCreds();
   if (!creds) return;
@@ -609,12 +600,10 @@ function bootstrap() {
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
 
-  // Reloj
   setInterval(() => {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
-  // Formulario de credenciales (primera vez) — esto SÍ es un clic real, popup permitido.
   els.gateForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveCreds(els.gateUser.value.trim(), els.gatePass.value);
@@ -623,13 +612,11 @@ function bootstrap() {
   });
 
   els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
-
   els.resetBtn.addEventListener('click', () => {
     if (!confirm('¿Olvidar la cuenta guardada en este dispositivo?')) return;
     clearCreds();
     location.reload();
   });
-
   els.backBtn.addEventListener('click', () => { stopPlayback(); showScreen('grid'); });
   els.playerRetryBtn.addEventListener('click', () => {
     hidePlayerError();
@@ -642,9 +629,6 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Arranque automático: NO es un clic real, así que si hace falta un popup para
-  // loguear va a bloquearse — en ese caso queda listo el botón de 1 clic en la
-  // pantalla de acceso (ver renderGateForCreds), sin mostrar ningún error confuso.
   const creds = getStoredCreds();
   if (creds) {
     bootstrapSession();
