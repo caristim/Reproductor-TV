@@ -1,12 +1,13 @@
 /**
  * app.js — Antena (TV Uruguay / AntelTV)
- * Con arrastre de canales corregido.
+ * Versión con JWT en Authorization header para la grilla.
  */
 
 'use strict';
 
 const state = {
   sessionToken: null,
+  jwt: null,           // <--- guardamos el JWT
   sessionJwtExp: null,
   channels: [],
   currentChannel: null,
@@ -112,7 +113,11 @@ async function loginAndCreateSession() {
   }
 
   const sessionData = await sessionRes.json();
+  
+  // Guardar ambos tokens
   state.sessionToken = sessionData.token;
+  state.jwt = sessionData.jwt;  // <--- NUEVO: guardar JWT
+  
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
   scheduleSessionRenewal();
@@ -154,10 +159,11 @@ function hideRenewBanner() {
 /* ================== GRILLA ================== */
 
 async function loadGrid() {
+  // Usamos el JWT en el header Authorization
   const res = await fetch(CONFIG.GRID_API, {
     headers: {
       ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.sessionToken
+      'Authorization': 'Bearer ' + state.jwt  // <--- CORREGIDO: usar JWT
     }
   });
 
@@ -287,13 +293,12 @@ function moveGrabbedChannel(key) {
 /* ================== ARRASTRE CORREGIDO ================== */
 
 function enableCardDrag(card) {
-  // Prevenir el drag nativo del navegador
   card.addEventListener('dragstart', (e) => e.preventDefault());
 
   card.addEventListener('pointerdown', (e) => {
     if (!state.orderMode) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    e.preventDefault(); // Evita selección de texto y drag nativo
+    e.preventDefault();
 
     const rect = card.getBoundingClientRect();
     state.dragCtx = {
@@ -319,11 +324,8 @@ function enableCardDrag(card) {
       const dist = Math.hypot(e.clientX - ctx.startX, e.clientY - ctx.startY);
       if (dist < 6) return;
       ctx.moved = true;
-      // Crear un clon visual para el arrastre (opcional)
     }
 
-    // Mover el clon o la tarjeta con el mouse (opcional)
-    // En lugar de mover la tarjeta, usamos un clon para no perder el pointer capture
     if (!ctx.clone) {
       ctx.clone = card.cloneNode(true);
       ctx.clone.style.position = 'fixed';
@@ -338,13 +340,11 @@ function enableCardDrag(card) {
     ctx.clone.style.left = (e.clientX - ctx.offsetX) + 'px';
     ctx.clone.style.top = (e.clientY - ctx.offsetY) + 'px';
 
-    // Detectar debajo de qué tarjeta estamos
     card.style.pointerEvents = 'none';
     const under = document.elementFromPoint(e.clientX, e.clientY);
     card.style.pointerEvents = '';
     const targetCard = under && under.closest ? under.closest('.channel-card') : null;
     if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
-      // Resaltar la tarjeta destino
       els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
       targetCard.classList.add('drag-over');
     } else {
@@ -356,7 +356,6 @@ function enableCardDrag(card) {
     const ctx = state.dragCtx;
     if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
 
-    // Eliminar el clon
     if (ctx.clone) {
       ctx.clone.remove();
       ctx.clone = null;
@@ -366,7 +365,6 @@ function enableCardDrag(card) {
     els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
 
     if (ctx.moved) {
-      // Determinar la tarjeta destino
       card.style.pointerEvents = 'none';
       const under = document.elementFromPoint(e.clientX, e.clientY);
       card.style.pointerEvents = '';
@@ -381,7 +379,6 @@ function enableCardDrag(card) {
           const [item] = state.channels.splice(fromIdx, 1);
           state.channels.splice(toIdx, 0, item);
           saveChannelOrder();
-          // Reordenar el DOM sin re-renderizar todo
           if (fromIdx < toIdx) {
             els.channelGrid.insertBefore(card, targetCard.nextSibling);
           } else {
@@ -460,6 +457,7 @@ async function playChannel(ch) {
 }
 
 async function fetchStreamUrl(publicId) {
+  // Para el stream, seguimos usando el token corto en la URL (eso funcionaba)
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
