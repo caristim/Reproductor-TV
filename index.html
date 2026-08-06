@@ -54,17 +54,41 @@
       </div>
     </section>
 
-    <!-- ============ PANTALLA 2: GRILLA ============ -->
-    <section id="gridScreen" class="screen grid-screen" hidden>
-      <div class="grid-toolbar">
-        <button id="orderModeBtn" class="btn-ghost" type="button">Organizar orden</button>
-        <p id="orderModeHint" class="order-hint" hidden>Arrastrá un canal para moverlo. Con el control: Enter/OK para tomarlo, flechas para moverlo, Enter/OK de nuevo para soltarlo.</p>
+    <!-- ============ PANTALLA 2: CATEGORÍAS ============ -->
+    <section id="categoryScreen" class="screen category-screen" hidden>
+      <div class="category-grid">
+        <button class="category-card" type="button" data-category="canales">
+          <span class="category-icon" aria-hidden="true">📺</span>
+          <span class="category-name">Canales</span>
+        </button>
+        <button class="category-card" type="button" data-category="radios">
+          <span class="category-icon" aria-hidden="true">📻</span>
+          <span class="category-name">Radios</span>
+        </button>
+        <button class="category-card" type="button" data-category="camaras">
+          <span class="category-icon" aria-hidden="true">📷</span>
+          <span class="category-name">Cámaras</span>
+        </button>
+        <button class="category-card" type="button" data-category="peliculas">
+          <span class="category-icon" aria-hidden="true">🎬</span>
+          <span class="category-name">Películas</span>
+        </button>
       </div>
-      <div id="channelGrid" class="channel-grid" role="list"></div>
-      <p id="gridEmpty" class="grid-empty" hidden>No se pudo cargar la grilla de canales. <button id="retryGridBtn" class="btn-link">Reintentar</button></p>
     </section>
 
-    <!-- ============ PANTALLA 3: REPRODUCTOR ============ -->
+    <!-- ============ PANTALLA 3: GRILLA ============ -->
+    <section id="gridScreen" class="screen grid-screen" hidden>
+      <div class="grid-toolbar">
+        <button id="backToCategoriesBtn" class="btn-ghost" type="button">← Categorías</button>
+        <h2 id="gridTitle" class="grid-title"></h2>
+        <button id="orderModeBtn" class="btn-ghost" type="button">Organizar orden</button>
+        <p id="orderModeHint" class="order-hint" hidden>Arrastrá una tarjeta para moverla. Con el control: Enter/OK para tomarla, flechas para moverla, Enter/OK de nuevo para soltarla.</p>
+      </div>
+      <div id="channelGrid" class="channel-grid" role="list"></div>
+      <p id="gridEmpty" class="grid-empty" hidden>No se pudo cargar el contenido. <button id="retryGridBtn" class="btn-link">Reintentar</button></p>
+    </section>
+
+    <!-- ============ PANTALLA 4: REPRODUCTOR ============ -->
     <section id="playerScreen" class="screen player-screen" hidden>
       <div class="player-top">
         <button id="backBtn" class="btn-back">← Volver a la grilla</button>
