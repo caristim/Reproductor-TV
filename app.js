@@ -11,6 +11,7 @@ const state = {
   sessionToken: null,
   jwt: null,           // <--- guardamos el JWT
   sessionJwtExp: null,
+  currentCategory: null, // 'canales' | 'radios' | 'camaras' | 'peliculas'
   channels: [],
   currentChannel: null,
   hls: null,
@@ -160,14 +161,50 @@ function hideRenewBanner() {
 
 /* ================== GRILLA ================== */
 
-async function loadGrid() {
+// Normaliza un nombre para comparar sin importar mayúsculas, acentos,
+// espacios ni puntuación ("VTV Futbol 2" === "vtv futbol2" === "VTV Fútbol 2").
+function normalizeName(str) {
+  return (str || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function isExcludedChannel(nombre) {
+  const n = normalizeName(nombre);
+  return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
+}
+
+// Orden por defecto SOLO para "canales": los de CHANNEL_PRIORITY_ORDER van
+// primero, en ese orden; el resto queda después, en el mismo orden relativo
+// en que los devolvió la API (sort estable).
+function applyDefaultChannelOrder(channels) {
+  const rank = new Map(CONFIG.CHANNEL_PRIORITY_ORDER.map((n, i) => [normalizeName(n), i]));
+  return channels.slice().sort((a, b) => {
+    const ra = rank.has(normalizeName(a.nombre)) ? rank.get(normalizeName(a.nombre)) : Infinity;
+    const rb = rank.has(normalizeName(b.nombre)) ? rank.get(normalizeName(b.nombre)) : Infinity;
+    return ra - rb;
+  });
+}
+
+// Clave de localStorage donde se guarda el orden arrastrado a mano, por
+// categoría (así arrastrar en "radios" no pisa el orden de "canales").
+function orderStorageKey(category) {
+  return category === 'canales'
+    ? CONFIG.STORAGE_KEYS.order
+    : CONFIG.STORAGE_KEYS.order + '_' + category;
+}
+
+async function loadGrid(category) {
+  state.currentCategory = category;
+  const listId = CONFIG.LISTAS[category];
+
   // Confirmado con captura de red real del sitio oficial (versión buena del
-  // 04/08): el pedido necesita AMBAS cosas a la vez: el token corto como
-  // query param (?token=...) Y el JWT largo de la sesión en el header
-  // Authorization. Sin el header, el backend devuelve 400 "Authorization
-  // not found" (probablemente exige el header cuando el Origin no es el
-  // dominio oficial del proveedor).
-  const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
+  // 04/08, y verificado también para radios/cámaras/películas): el pedido
+  // necesita AMBAS cosas a la vez: el token corto como query param
+  // (?token=...) Y el JWT largo de la sesión en el header Authorization.
+  // Sin el header, el backend devuelve 400 "Authorization not found".
+  const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
     headers: {
       ...CONFIG.GRID_HEADERS,
@@ -185,22 +222,29 @@ async function loadGrid() {
   }
 
   const data = await res.json();
-  const fetched = (data.contenidos || []).map(c => ({
+  let fetched = (data.contenidos || []).map(c => ({
     publicId: c.public_id,
     nombre: c.nombre_fantasia || c.nombre,
     logo: c.imagen_horizontal || c.imagen_principal,
   }));
-  state.channels = applySavedOrder(fetched);
+
+  if (category === 'canales') {
+    fetched = fetched.filter(ch => !isExcludedChannel(ch.nombre));
+  }
+
+  state.channels = applySavedOrder(fetched, category);
   renderGrid();
+  if (els.gridTitle) els.gridTitle.textContent = CONFIG.CATEGORY_LABELS[category] || '';
 }
 
-function applySavedOrder(channels) {
-  const raw = localStorage.getItem(CONFIG.STORAGE_KEYS.order);
-  if (!raw) return channels;
+function applySavedOrder(channels, category) {
+  const base = category === 'canales' ? applyDefaultChannelOrder(channels) : channels;
+  const raw = localStorage.getItem(orderStorageKey(category));
+  if (!raw) return base;
   let savedIds;
-  try { savedIds = JSON.parse(raw); } catch (e) { return channels; }
+  try { savedIds = JSON.parse(raw); } catch (e) { return base; }
   const rank = new Map(savedIds.map((id, i) => [id, i]));
-  return channels.slice().sort((a, b) => {
+  return base.slice().sort((a, b) => {
     const ra = rank.has(a.publicId) ? rank.get(a.publicId) : Infinity;
     const rb = rank.has(b.publicId) ? rank.get(b.publicId) : Infinity;
     return ra - rb;
@@ -208,7 +252,7 @@ function applySavedOrder(channels) {
 }
 
 function saveChannelOrder() {
-  localStorage.setItem(CONFIG.STORAGE_KEYS.order, JSON.stringify(state.channels.map(c => c.publicId)));
+  localStorage.setItem(orderStorageKey(state.currentCategory), JSON.stringify(state.channels.map(c => c.publicId)));
 }
 
 function renderGrid() {
@@ -554,6 +598,7 @@ function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
 
 function showScreen(name) {
   els.gateScreen.hidden = name !== 'gate';
+  els.categoryScreen.hidden = name !== 'categories';
   els.gridScreen.hidden = name !== 'grid';
   els.playerScreen.hidden = name !== 'player';
 }
@@ -565,8 +610,7 @@ async function bootstrapSession() {
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
-    await loadGrid();
-    showScreen('grid');
+    showScreen('categories');
     els.resetBtn.hidden = false;
   } catch (err) {
     console.error('Error al conectar:', err);
@@ -601,7 +645,8 @@ function bootstrap() {
   [
     'clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn',
     'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError',
-    'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
+    'categoryScreen',
+    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
     'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
@@ -630,7 +675,26 @@ function bootstrap() {
   });
   els.retryGridBtn.addEventListener('click', () => {
     els.gridEmpty.hidden = true;
-    loadGrid().catch(() => { els.gridEmpty.hidden = false; });
+    loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
+  });
+
+  els.categoryScreen.querySelectorAll('[data-category]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const category = btn.dataset.category;
+      if (state.orderMode) toggleOrderMode();
+      showScreen('grid');
+      els.gridEmpty.hidden = true;
+      els.channelGrid.innerHTML = '';
+      loadGrid(category).catch(err => {
+        console.error('Error al cargar ' + category + ':', err);
+        els.gridEmpty.hidden = false;
+      });
+    });
+  });
+
+  els.backToCategoriesBtn.addEventListener('click', () => {
+    if (state.orderMode) toggleOrderMode();
+    showScreen('categories');
   });
 
   setupGridKeyboardNav();
