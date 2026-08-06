@@ -235,6 +235,46 @@ main { padding: clamp(16px, 4vw, 40px); }
 .gate-error { color: var(--live); font-size: 0.85rem; margin-top: 14px; }
 .gate-note { color: var(--text-faint); font-size: 0.76rem; line-height: 1.5; margin-top: 18px; }
 
+/* --- Pantalla de categorías --- */
+.category-screen {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 20px;
+  max-width: 680px;
+  width: 100%;
+}
+.category-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 36px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.category-card:hover,
+.category-card:focus-visible {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+  transform: translateY(-3px);
+}
+.category-card:focus-visible { box-shadow: var(--focus-ring); }
+.category-icon { font-size: 2.6rem; line-height: 1; }
+.category-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
 /* --- Barra de organizar orden --- */
 .grid-toolbar {
   display: flex;
@@ -242,6 +282,14 @@ main { padding: clamp(16px, 4vw, 40px); }
   gap: 14px;
   flex-wrap: wrap;
   margin-bottom: 16px;
+}
+.grid-title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+  min-width: 100px;
 }
 .grid-toolbar .btn-ghost.is-active {
   background: var(--accent-soft);
@@ -426,6 +474,9 @@ main { padding: clamp(16px, 4vw, 40px); }
   .channel-card { padding: 14px 10px; }
   .channel-card-logo { height: 48px; }
   .brand h1 { font-size: 1.2rem; }
+  .category-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .category-card { padding: 24px 14px; }
+  .category-icon { font-size: 2rem; }
 }
 
 /* Pantallas grandes (TV) — objetivos más grandes para verse bien a distancia */
