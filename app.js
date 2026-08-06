@@ -1,6 +1,8 @@
 /**
- * app.js — Antena (TV Uruguay / AntelTV)
- * Versión con JWT en Authorization header para la grilla.
+ * app.js — (REPRODUCTOR TV)
+ * Con arrastre de canales corregido. Grilla usa token en URL + JWT en
+ * Authorization (restaurada la combinación confirmada del 04/08, perdida
+ * el 05/08 al simplificar loadGrid solo a JWT en el header).
  */
 
 'use strict';
@@ -159,11 +161,17 @@ function hideRenewBanner() {
 /* ================== GRILLA ================== */
 
 async function loadGrid() {
-  // Usamos el JWT en el header Authorization
-  const res = await fetch(CONFIG.GRID_API, {
+  // Confirmado con captura de red real del sitio oficial (versión buena del
+  // 04/08): el pedido necesita AMBAS cosas a la vez: el token corto como
+  // query param (?token=...) Y el JWT largo de la sesión en el header
+  // Authorization. Sin el header, el backend devuelve 400 "Authorization
+  // not found" (probablemente exige el header cuando el Origin no es el
+  // dominio oficial del proveedor).
+  const url = `${CONFIG.GRID_API}?token=${encodeURIComponent(state.sessionToken)}`;
+  const res = await fetch(url, {
     headers: {
       ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.jwt  // <--- CORREGIDO: usar JWT
+      'Authorization': 'Bearer ' + state.jwt
     }
   });
 
